@@ -1,5 +1,6 @@
 import argparse
 import os
+from tqdm import tqdm
 
 import imageio
 import numpy as np
@@ -205,6 +206,109 @@ class DamageAssessmentDatset(Dataset):
     def __len__(self):
         return len(self.data_list)
 
+class MultiChangeDetectionDatset(Dataset):
+    def __init__(self, dataset_path, data_list, crop_size, max_iters=None, type='train', data_loader=img_loader):
+        self.dataset_path = dataset_path
+        self.data_list = data_list
+        self.loader = data_loader
+        self.type = type
+        self.data_pro_type = self.type
+        
+        if max_iters is not None:
+            self.data_list = self.data_list * int(np.ceil(float(max_iters) / len(self.data_list)))
+            self.data_list = self.data_list[0:max_iters]
+        self.crop_size = crop_size
+        
+    def __transforms(self, aug, pre_img, post_img, label):
+        if aug:
+            pre_img, post_img, label = imutils.random_crop_new(pre_img, post_img, label, self.crop_size)
+            pre_img, post_img, label = imutils.random_fliplr(pre_img, post_img, label)
+            pre_img, post_img, label = imutils.random_flipud(pre_img, post_img, label)
+            pre_img, post_img, label = imutils.random_rot(pre_img, post_img, label)
+
+        pre_img = imutils.normalize_img(pre_img)  # imagenet normalization
+        pre_img = np.transpose(pre_img, (2, 0, 1))
+
+        post_img = imutils.normalize_img(post_img)  # imagenet normalization
+        post_img = np.transpose(post_img, (2, 0, 1))
+
+        return pre_img, post_img, label
+
+    def __getitem__(self, index):
+        pre_path = os.path.join(self.dataset_path, 'T1', self.data_list[index])
+        post_path = os.path.join(self.dataset_path, 'T2', self.data_list[index])
+        label_path = os.path.join(self.dataset_path, 'GT', self.data_list[index])
+        pre_img = self.loader(pre_path)
+        post_img = self.loader(post_path)
+        label = self.loader(label_path)
+    
+        if 'train' in self.data_pro_type:
+            pre_img, post_img, label = self.__transforms(True, pre_img, post_img, label)
+            label = label.astype(np.int64)
+        else:
+            pre_img, post_img, label = self.__transforms(False, pre_img, post_img, label)
+            label = np.asarray(label)
+            label = label.astype(np.int64)
+    
+        data_idx = self.data_list[index]        
+        return pre_img, post_img, label, data_idx
+
+    def __len__(self):
+        return len(self.data_list)
+
+class AugmentDatset(MultiChangeDetectionDatset):
+    def __init__(self, dataset_path, data_list, crop_size, max_iters=None, type='train', data_loader=img_loader, aug_times=4):
+        super().__init__(dataset_path, data_list, crop_size, max_iters, type, data_loader)
+        self.crop_size = crop_size
+        self.aug_times = aug_times # 데이터 증강 횟수
+        
+        # 타겟 클래스를 포함한 영상 개수 및 인덱스 저장
+        cnt = 0
+        aug_idx = []
+        target_class = [1, 2]
+        total_samples = len(self.data_list)
+        for idx in tqdm(range(total_samples)):
+            label_path = os.path.join(self.dataset_path, 'GT', self.data_list[idx])
+            label = self.loader(label_path)
+            if np.isin(target_class, label).any():
+                aug_idx.append([idx])
+                cnt += self.aug_times
+        self.count = cnt
+        self.aug_idx = aug_idx
+
+    def __augments(self, pre_img, post_img, label):
+        # 데이터 변형
+	aug_pre_img, aug_post_img, aug_label = imutils.random_crop_new(pre_img, post_img, label, self.crop_size)
+	aug_pre_img, aug_post_img, aug_label = imutils.random_brightness_contrast(aug_pre_img, aug_post_img, aug_label)
+	aug_pre_img, aug_post_img, aug_label = imutils.random_noise(aug_pre_img, aug_post_img, aug_label)
+	aug_pre_img, aug_post_img, aug_label = imutils.random_cutout(aug_pre_img, aug_post_img, aug_label)
+
+        aug_pre_img = imutils.normalize_img(aug_pre_img)  # imagenet normalization
+        aug_pre_img = np.transpose(aug_pre_img, (2, 0, 1))
+
+        aug_post_img = imutils.normalize_img(aug_post_img)  # imagenet normalization
+        aug_post_img = np.transpose(aug_post_img, (2, 0, 1))
+
+        return aug_pre_img, aug_post_img, aug_label
+
+    def __getitem__(self, index):
+        aug_data_list = [x for x in self.data_list for _ in range(self.aug_times)] # 데이터 리스트 복제
+        pre_path = os.path.join(self.dataset_path, 'T1', aug_data_list[index])
+        post_path = os.path.join(self.dataset_path, 'T2', aug_data_list[index])
+        label_path = os.path.join(self.dataset_path, 'GT', aug_data_list[index])
+        pre_img = self.loader(pre_path)
+        post_img = self.loader(post_path)
+        label = self.loader(label_path)
+
+        aug_pre_img, aug_post_img, aug_label = self.__augments(pre_img, post_img, label)
+        aug_label = aug_label.astype(np.int64)
+
+        # 증강 데이터 인덱스 부여
+        aug_data_idx = f"aug_{self.data_list[index][:-4]}_{index%self.aug_times+1}.png"
+        return aug_pre_img, aug_post_img, aug_label, aug_data_idx
+        
+    def __len__(self):
+        return self.count # init에서 계산한 데이터 수를 바탕으로 데이터셋 길이 결정
 
 def make_data_loader(args, **kwargs):  # **kwargs could be omitted
     if 'SYSU' in args.dataset or 'LEVIR-CD+' in args.dataset or 'WHU' in args.dataset:
@@ -213,6 +317,18 @@ def make_data_loader(args, **kwargs):  # **kwargs could be omitted
         data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=args.shuffle, **kwargs, num_workers=16,
                                  drop_last=False)
         return data_loader
+       
+    # Multi-class 변화탐지 dataloader 추가
+    elif 'AIHUB' in args.dataset:
+        dataset1 = MultiChangeDetectionDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, args.max_iters, args.type)
+        if args.type == 'train':
+            dataset2 = AugmentDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, args.max_iters, args.type, aug_times=3)
+            dataset = ConcatDataset([dataset1, dataset2])
+        else:
+            dataset = dataset1
+        data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, **kwargs, num_workers=12, pin_memory=True, drop_last=False)
+        return data_loader
+        
     elif 'xBD' in args.dataset:
         dataset = DamageAssessmentDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, args.max_iters, args.type)
         data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=args.shuffle, **kwargs, num_workers=6,

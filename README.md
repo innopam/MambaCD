@@ -99,7 +99,7 @@ project_path/MambaCD/pretrained_weight/
 ```
 
 ### `C. Data Preparation`
-***Binary change detection***
+***Binary/Multi change detection***
 
 The three datasets [SYSU](https://github.com/liumency/SYSU-CD), [LEVIR-CD+](https://chenhao.in/LEVIR/) and [WHU-CD](https://study.rsgis.whu.edu.cn/pages/download/building_dataset.html) are used for binary change detection experiments. Please download them and make them have the following folder/file structure:
 ```
@@ -221,6 +221,24 @@ python script/train_MambaBCD.py  --dataset 'SYSU' \
                                  --pretrained_weight_path '<project_path>/MambaCD/pretrained_weight/vssm_small_0229_ckpt_epoch_222.pth'
 ```
 
+***Multi change detection***
+
+The following commands show how to train and evaluate MambaBCD-Small on the SYSU dataset:
+```bash
+python script/train_MambaMCD.py  --dataset 'AIHUB' \
+                                 --batch_size 16 \
+                                 --crop_size 256 \
+                                 --max_iters 320000 \
+                                 --model_type MambaBCD_Base \
+                                 --model_param_path '<project_path>/MambaCD/changedetection/saved_models' \ 
+                                 --train_dataset_path '<dataset_path>/AIHUB/train' \
+                                 --train_data_list_path '<dataset_path>/AIHUB/train_list.txt' \
+                                 --test_dataset_path '<dataset_path>/AIHUB/test' \
+                                 --test_data_list_path '<dataset_path>/AIHUB/test_list.txt'
+                                 --cfg '<project_path>/MambaCD/changedetection/configs/vssm1/vssm_base_224.yaml' \
+                                 --pretrained_weight_path '<project_path>/MambaCD/pretrained_weight/vssm_base_0229_ckpt_epoch_237.pth'
+```
+
 ***Semantic change detection***
 
 The following commands show how to train and evaluate MambaSCD-Small on the SECOND dataset:
@@ -277,6 +295,17 @@ python script/infer_MambaBCD.py  --dataset 'LEVIR-CD+' \
                                  --test_data_list_path '<dataset_path>/LEVIR-CD+/test_list.txt' \
                                  --cfg '<project_path>/MambaCD/changedetection/configs/vssm1/vssm_tiny_224_0229flex.yaml' \
                                  --resume '<saved_model_path>/MambaBCD_Tiny_LEVIRCD+_F1_0.8803.pth'
+```
+
+***Multi change detection***
+
+```bash
+python script/infer_MambaMCD.py  --dataset 'AIHUB' \
+                                 --model_type 'MambaBCD_Base' \
+                                 --test_dataset_path '<dataset_path>/AIHUB/test' \
+                                 --test_data_list_path '<dataset_path>/AIHUB/test_list.txt' \
+                                 --cfg '<project_path>/MambaCD/changedetection/configs/vssm1/vssm_base_224.yaml' \
+                                 --resume '<saved_model_path>/vssm_base_multi_epoch_30000.pth'
 ```
 
 ***Semantic change detection***

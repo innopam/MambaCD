@@ -342,3 +342,41 @@ def random_crop_mcd(pre_img, post_img, label_cd, label_1, label_2, crop_size, me
     label_2 = pad_label_2[H_start:H_end, W_start:W_end]
 
     return pre_img, post_img, label_cd, label_1, label_2
+    
+def random_brightness_contrast(pre_img, post_img, label, brightness_range=(0.8, 1.2), contrast_range=(0.8, 1.2), prob=0.5):
+    if random.random() < prob:
+        brightness_factor = random.uniform(*brightness_range)
+        contrast_factor = random.uniform(*contrast_range)
+
+        pre_img = np.clip(pre_img * brightness_factor, 0, 255)
+        post_img = np.clip(post_img * brightness_factor, 0, 255)
+        
+        pre_img = np.clip((pre_img - pre_img.mean()) * contrast_factor + pre_img.mean(), 0, 255)
+        post_img = np.clip((post_img - post_img.mean()) * contrast_factor + post_img.mean(), 0, 255)
+
+    return pre_img, post_img, label
+
+def random_noise(pre_img, post_img, label, noise_factor=0.05, prob=0.5):
+    if random.random() < prob:
+        noise = np.random.normal(0, noise_factor, pre_img.shape)
+        pre_img = np.clip(pre_img + noise * 255, 0, 255)
+        post_img = np.clip(post_img + noise * 255, 0, 255)
+
+    return pre_img, post_img, label
+
+def random_cutout(pre_img, post_img, label, max_hole_size=64, prob=0.5):
+    if random.random() < prob:
+        h, w = (np.array(pre_img.shape[:2]) / 2).astype(int)
+        hole_h = random.randint(0, max_hole_size)
+        hole_w = random.randint(0, max_hole_size)
+
+        # 랜덤한 위치에 사각형 구멍을 만듬
+        top = random.randint(0, h - hole_h)
+        left = random.randint(0, w - hole_w)
+
+        # 구멍 부분을 0으로 설정 (배경값을 이용)
+        pre_img[top:top + hole_h, left:left + hole_w] = 0
+        post_img[top:top + hole_h, left:left + hole_w] = 0
+        label[top:top + hole_h, left:left + hole_w] = 0
+
+    return pre_img, post_img, label

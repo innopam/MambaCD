@@ -149,41 +149,40 @@ def binary_xloss(logits, labels, ignore=None):
 
 # --------------------------- MULTICLASS LOSSES ---------------------------
 
-
-def lovasz_softmax(probas, labels, classes='present', per_image=False, ignore=None):
+# Class_weight 반영 가능하도록 수정
+def lovasz_softmax(probas, labels, classes='present', per_image=False, ignore=None, class_weights=None):
     """
-    Multi-class Lovasz-Softmax loss
-      probas: [B, C, H, W] Variable, class probabilities at each prediction (between 0 and 1).
-              Interpreted as binary (sigmoid) output with outputs of size [B, H, W].
+    Multi-class Lovasz-Softmax loss with optional class weights
+      probas: [B, C, H, W] Variable, class probabilities at each prediction (between 0 and 1)
       labels: [B, H, W] Tensor, ground truth labels (between 0 and C - 1)
-      classes: 'all' for all, 'present' for classes present in labels, or a list of classes to average.
-      per_image: compute the loss per image instead of per batch
-      ignore: void class labels
+      class_weights: Tensor of class weights, size [C], one weight per class
     """
     if per_image:
-        loss = mean(lovasz_softmax_flat(*flatten_probas(prob.unsqueeze(0), lab.unsqueeze(0), ignore), classes=classes)
-                          for prob, lab in zip(probas, labels))
+        loss = mean(lovasz_softmax_flat(*flatten_probas(prob.unsqueeze(0), lab.unsqueeze(0), ignore),
+                                        classes=classes, class_weights=class_weights)
+                    for prob, lab in zip(probas, labels))
     else:
-        loss = lovasz_softmax_flat(*flatten_probas(probas, labels, ignore), classes=classes)
+        loss = lovasz_softmax_flat(*flatten_probas(probas, labels, ignore), 
+                                   classes=classes, class_weights=class_weights)
     return loss
 
-
-def lovasz_softmax_flat(probas, labels, classes='present'):
+# Class_weight 반영 가능하도록 수정
+def lovasz_softmax_flat(probas, labels, classes='present', class_weights=None):
     """
-    Multi-class Lovasz-Softmax loss
+    Multi-class Lovasz-Softmax loss with optional class weights
       probas: [P, C] Variable, class probabilities at each prediction (between 0 and 1)
       labels: [P] Tensor, ground truth labels (between 0 and C - 1)
-      classes: 'all' for all, 'present' for classes present in labels, or a list of classes to average.
+      class_weights: Tensor of class weights, size [C], one weight per class
     """
     if probas.numel() == 0:
-        # only void pixels, the gradients should be 0
         return probas * 0.
+    
     C = probas.size(1)
     losses = []
     class_to_sum = list(range(C)) if classes in ['all', 'present'] else classes
     for c in class_to_sum:
-        fg = (labels == c).float() # foreground for class c
-        if (classes is 'present' and fg.sum() == 0):
+        fg = (labels == c).float()  # foreground for class c
+        if classes == 'present' and fg.sum() == 0:
             continue
         if C == 1:
             if len(classes) > 1:
@@ -191,11 +190,21 @@ def lovasz_softmax_flat(probas, labels, classes='present'):
             class_pred = probas[:, 0]
         else:
             class_pred = probas[:, c]
-        errors = (Variable(fg) - class_pred).abs()
+        
+        errors = (fg - class_pred).abs()
         errors_sorted, perm = torch.sort(errors, 0, descending=True)
         perm = perm.data
         fg_sorted = fg[perm]
-        losses.append(torch.dot(errors_sorted, Variable(lovasz_grad(fg_sorted))))
+        
+        # Apply class weight if available
+        if class_weights is not None:
+            weight = class_weights[c] if c < len(class_weights) else 1.0
+        else:
+            weight = 1.0
+
+        # Weighted loss for this class
+        losses.append(weight * torch.dot(errors_sorted, lovasz_grad(fg_sorted)))
+
     return mean(losses)
 
 
