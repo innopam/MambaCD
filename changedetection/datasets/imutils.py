@@ -1,4 +1,5 @@
 import random
+from tqdm import tqdm
 import numpy as np
 from PIL import Image
 # from scipy import misc

@@ -6,7 +6,7 @@ import imageio
 import numpy as np
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, ConcatDataset
 
 import MambaCD.changedetection.datasets.imutils as imutils
 
@@ -257,20 +257,20 @@ class MultiChangeDetectionDatset(Dataset):
         return len(self.data_list)
 
 class AugmentDatset(MultiChangeDetectionDatset):
-    def __init__(self, dataset_path, data_list, crop_size, max_iters=None, type='train', data_loader=img_loader, aug_times=4):
+    def __init__(self, dataset_path, data_list, crop_size, target_class, aug_times, max_iters=None, type='train', data_loader=img_loader):
         super().__init__(dataset_path, data_list, crop_size, max_iters, type, data_loader)
         self.crop_size = crop_size
         self.aug_times = aug_times # 데이터 증강 횟수
+        self.target_class = target_class # 증강 타겟 클래스
         
         # 타겟 클래스를 포함한 영상 개수 및 인덱스 저장
         cnt = 0
         aug_idx = []
-        target_class = [1, 2]
         total_samples = len(self.data_list)
         for idx in tqdm(range(total_samples)):
             label_path = os.path.join(self.dataset_path, 'GT', self.data_list[idx])
             label = self.loader(label_path)
-            if np.isin(target_class, label).any():
+            if np.isin(self.target_class, label).any():
                 aug_idx.append([idx])
                 cnt += self.aug_times
         self.count = cnt
@@ -278,10 +278,10 @@ class AugmentDatset(MultiChangeDetectionDatset):
 
     def __augments(self, pre_img, post_img, label):
         # 데이터 변형
-	aug_pre_img, aug_post_img, aug_label = imutils.random_crop_new(pre_img, post_img, label, self.crop_size)
-	aug_pre_img, aug_post_img, aug_label = imutils.random_brightness_contrast(aug_pre_img, aug_post_img, aug_label)
-	aug_pre_img, aug_post_img, aug_label = imutils.random_noise(aug_pre_img, aug_post_img, aug_label)
-	aug_pre_img, aug_post_img, aug_label = imutils.random_cutout(aug_pre_img, aug_post_img, aug_label)
+        aug_pre_img, aug_post_img, aug_label = imutils.random_crop_new(pre_img, post_img, label, self.crop_size)
+        aug_pre_img, aug_post_img, aug_label = imutils.random_brightness_contrast(aug_pre_img, aug_post_img, aug_label)
+        aug_pre_img, aug_post_img, aug_label = imutils.random_noise(aug_pre_img, aug_post_img, aug_label)
+        aug_pre_img, aug_post_img, aug_label = imutils.random_cutout(aug_pre_img, aug_post_img, aug_label)
 
         aug_pre_img = imutils.normalize_img(aug_pre_img)  # imagenet normalization
         aug_pre_img = np.transpose(aug_pre_img, (2, 0, 1))
@@ -310,6 +310,28 @@ class AugmentDatset(MultiChangeDetectionDatset):
     def __len__(self):
         return self.count # init에서 계산한 데이터 수를 바탕으로 데이터셋 길이 결정
 
+def auto_weight(dataset):
+    all_labels = []
+    for _, _, labels, _ in tqdm(dataset):
+        all_labels.extend(labels.flatten())
+    unique_labels, counts = np.unique(all_labels, return_counts=True)
+    
+    class_dist = {int(k): int(v) for k, v in zip(unique_labels, counts)}
+    print("클래스 분포:", class_dist)
+    
+    total_count = np.sum(counts)
+    num_classes = len(counts)
+    
+    # 제로 디비전 체크
+    counts[counts == 0] = 1e-6  # 최소값으로 대체하여 제로 디비전 방지
+    
+    class_weights = total_count / (num_classes * counts)
+    norm_weights = class_weights / np.sum(class_weights)
+    
+    print("정규화된 클래스 가중치:", norm_weights)
+    
+    return norm_weights
+
 def make_data_loader(args, **kwargs):  # **kwargs could be omitted
     if 'SYSU' in args.dataset or 'LEVIR-CD+' in args.dataset or 'WHU' in args.dataset:
         dataset = ChangeDetectionDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, args.max_iters, args.type)
@@ -321,12 +343,17 @@ def make_data_loader(args, **kwargs):  # **kwargs could be omitted
     # Multi-class 변화탐지 dataloader 추가
     elif 'AIHUB' in args.dataset:
         dataset1 = MultiChangeDetectionDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, args.max_iters, args.type)
-        if args.type == 'train':
-            dataset2 = AugmentDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, args.max_iters, args.type, aug_times=3)
+        if args.augment:
+            dataset2 = AugmentDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, kwargs.get('target_class'), kwargs.get('aug_times'), args.max_iters, args.type)
             dataset = ConcatDataset([dataset1, dataset2])
         else:
             dataset = dataset1
-        data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, **kwargs, num_workers=12, pin_memory=True, drop_last=False)
+        data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=12, pin_memory=True, drop_last=False)
+
+        if args.type == 'train' and args.auto_weight:
+            class_weight = auto_weight(dataset)
+            return data_loader, class_weight
+
         return data_loader
         
     elif 'xBD' in args.dataset:

@@ -1,10 +1,9 @@
 import sys
-sys.path.append('/workspace/Change_Detection')
+sys.path.append('/workspace/Change_Detection/innopam')
 
 import argparse
 import os
 import csv
-import time
 import numpy as np
 
 from MambaCD.changedetection.configs.config import get_config
@@ -14,10 +13,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
-from torch.optim import lr_scheduler  # 추가된 부분
+from torch.optim import lr_scheduler
 from tqdm import tqdm
 
-from MambaCD.changedetection.datasets.make_data_loader import MultiChangeDetectionDatset, make_data_loader
+from MambaCD.changedetection.datasets.make_data_loader import MultiChangeDetectionDatset, make_data_loader, auto_weight
 from MambaCD.changedetection.utils_func.metrics_multi import Evaluator
 from MambaCD.changedetection.models.MambaMCD import STMambaMCD
 
@@ -27,10 +26,21 @@ class Trainer(object):
     def __init__(self, args):
         self.args = args
         config = get_config(args)
+        
+        if self.args.auto_weight:
+            if self.args.augment:
+                self.train_data_loader, self.class_weight = make_data_loader(args, target_class=config.DATA.TARGET_CLASS, aug_times=config.DATA.AUG_TIMES)
+            else:
+                self.train_data_loader, self.class_weight = make_data_loader(args)
+        else:
+            if self.args.augment:
+                self.train_data_loader = make_data_loader(args, target_class=config.DATA.TARGET_CLASS, aug_times=config.DATA.AUG_TIMES)
+                self.class_weight = config.MODEL.CLASS_WEIGHT
+            else:
+                self.train_data_loader = make_data_loader(args, config)
+                self.class_weight = config.MODEL.CLASS_WEIGHT
 
-        self.train_data_loader = make_data_loader(args)
-
-        self.evaluator = Evaluator(num_class=5)
+        self.evaluator = Evaluator(config.MODEL.NUM_CLASSES)
 
         self.deep_model = STMambaMCD(
             pretrained=args.pretrained_weight_path,
@@ -64,11 +74,14 @@ class Trainer(object):
             use_checkpoint=config.TRAIN.USE_CHECKPOINT,
             ) 
         self.deep_model = self.deep_model.cuda()
-        self.model_save_path = os.path.join(args.model_param_path, args.dataset,
-                                            args.model_type + '_' + str(time.time()))
         self.lr = args.learning_rate
         self.epoch = args.max_iters // args.batch_size
-
+        
+        init_save_path = os.path.join(args.model_param_path, args.dataset)
+        if not os.path.exists(init_save_path):
+            os.makedirs(init_save_path)
+        model_result = args.model_type + '_' + str(len(os.listdir(init_save_path)))
+        self.model_save_path = os.path.join(init_save_path, model_result)
         if not os.path.exists(self.model_save_path):
             os.makedirs(self.model_save_path)
 
@@ -97,6 +110,10 @@ class Trainer(object):
         elem_num = len(self.train_data_loader)
         train_enumerator = enumerate(self.train_data_loader)
         torch.cuda.empty_cache()
+        
+        # 클래스 가중치 설정
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        class_weights = torch.tensor(self.class_weight, dtype=torch.float32).to(device)
 
         # Mixed Precision Scaler 객체 생성
         scaler = GradScaler()
@@ -119,14 +136,13 @@ class Trainer(object):
 
             with autocast():
                 output_1 = self.deep_model(pre_change_imgs, post_change_imgs)
-                self.optim.zero_grad()
-                class_weights = torch.tensor([0.0010, 0.2999, 0.5664, 0.0511, 0.0816], device=output_1.device) # class_weight 설정
                 ce_loss_1 = F.cross_entropy(output_1, labels, weight=class_weights)
                 lovasz_loss = L.lovasz_softmax(F.softmax(output_1, dim=1), labels, class_weights=class_weights)
                 main_loss = ce_loss_1 + 0.75 * lovasz_loss
                 final_loss = main_loss.mean()
 
              # 손실 역전파와 옵티마이저 스텝도 Mixed Precision으로
+            self.optim.zero_grad()
             scaler.scale(final_loss).backward()
             scaler.step(self.optim)
             scaler.update()
@@ -166,7 +182,7 @@ class Trainer(object):
     def validation(self, itera):
         print('---------starting evaluation-----------')
         self.evaluator.reset()
-        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, 377, None, 'test')
+        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, args.crop_size, None, 'test')
         val_data_loader = DataLoader(dataset, batch_size=6, num_workers=6, drop_last=False)
         torch.cuda.empty_cache()
 
@@ -176,7 +192,7 @@ class Trainer(object):
         with open(val_file, mode='w') as f:
             writer = csv.writer(f)
             writer.writerow(['Recall', 'Precision', 'F1', 'IoU', 'OA', 'Kappa'])  # 검증 기록 헤더
-        #vbar = tqdm(val_data_loader, ncols=50)
+        vbar = tqdm(val_data_loader, ncols=50)
         with torch.no_grad():
             for itera, data in tqdm(enumerate(val_data_loader)):
                 pre_change_imgs, post_change_imgs, labels, _ = data
@@ -212,8 +228,8 @@ class Trainer(object):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Training on SYSU/LEVIR-CD+/WHU-CD dataset")
-    parser.add_argument('--cfg', type=str, default='/home/songjian/project/MambaCD/VMamba/classification/configs/vssm1/vssm_base_224.yaml')
+    parser = argparse.ArgumentParser(description="Training on AIHUB dataset")
+    parser.add_argument('--cfg', type=str, default='../changedetection/configs/vssm1/vssm_base_224.yaml')
     parser.add_argument(
         "--opts",
         help="Modify config options by adding 'KEY VALUE' pairs. ",
@@ -221,27 +237,29 @@ def main():
         nargs='+',
     )
     parser.add_argument('--pretrained_weight_path', type=str)
-    parser.add_argument('--dataset', type=str, default='SYSU')
+    parser.add_argument('--dataset', type=str, default='AIHUB')
     parser.add_argument('--type', type=str, default='train')
-    parser.add_argument('--train_dataset_path', type=str, default='/home/songjian/project/datasets/SYSU/train')
-    parser.add_argument('--train_data_list_path', type=str, default='/home/songjian/project/datasets/SYSU/train_list.txt')
-    parser.add_argument('--test_dataset_path', type=str, default='/home/songjian/project/datasets/SYSU/test')
-    parser.add_argument('--test_data_list_path', type=str, default='/home/songjian/project/datasets/SYSU/test_list.txt')
+    parser.add_argument('--train_dataset_path', type=str, default='../data/AIHUB/train')
+    parser.add_argument('--train_data_list_path', type=str, default='../data/AIHUB/train.txt')
+    parser.add_argument('--test_dataset_path', type=str, default='../data/AIHUB/test')
+    parser.add_argument('--test_data_list_path', type=str, default='../data/AIHUB/test.txt')
     parser.add_argument('--shuffle', type=bool, default=True)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--crop_size', type=int, default=256)
     parser.add_argument('--train_data_name_list', type=list)
     parser.add_argument('--test_data_name_list', type=list)
     parser.add_argument('--start_iter', type=int, default=0)
     parser.add_argument('--cuda', type=bool, default=True)
-    parser.add_argument('--max_iters', type=int, default=240000)
-    parser.add_argument('--model_type', type=str, default='MambaBCD')
+    parser.add_argument('--max_iters', type=int, default=160000)
+    parser.add_argument('--model_type', type=str, default='MambaMCD')
     parser.add_argument('--model_param_path', type=str, default='../saved_models')
 
     parser.add_argument('--resume', type=str)
     parser.add_argument('--learning_rate', type=float, default=5e-5)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=1e-4)
+    parser.add_argument('--auto_weight', type=bool, default=False)
+    parser.add_argument('--augment', type=bool, default=True)
 
     args = parser.parse_args()
     with open(args.train_data_list_path, "r") as f:

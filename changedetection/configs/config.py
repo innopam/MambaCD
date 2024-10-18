@@ -40,6 +40,11 @@ _C.DATA.PIN_MEMORY = True
 # Number of data loading threads
 _C.DATA.NUM_WORKERS = 8
 
+# Target class (Augmentation)
+_C.DATA.TARGET_CLASS = [1, 2]
+# Augmentation times
+_C.DATA.AUG_TIMES = 3
+
 # [SimMIM] Mask patch size for MaskGenerator
 _C.DATA.MASK_PATCH_SIZE = 32
 # [SimMIM] Mask ratio for MaskGenerator
@@ -60,6 +65,8 @@ _C.MODEL.PRETRAINED = ''
 _C.MODEL.RESUME = ''
 # Number of classes, overwritten in data preparation
 _C.MODEL.NUM_CLASSES = 1000
+# Weight of classes, must be the same as the number of classes
+_C.MODEL.CLASS_WEIGHT = [1, 1, 1, 1, 1]
 # Dropout rate
 _C.MODEL.DROP_RATE = 0.0
 # Drop path rate

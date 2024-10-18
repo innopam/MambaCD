@@ -56,7 +56,7 @@ class STMambaMCD(nn.Module):
             **clean_kwargs
         )
 
-        self.main_clf = nn.Conv2d(in_channels=128, out_channels=5, kernel_size=1)
+        self.main_clf = nn.Conv2d(in_channels=128, out_channels=kwargs['num_classes'], kernel_size=1)
 
     def _upsample_add(self, x, y):
         _, _, H, W = y.size()

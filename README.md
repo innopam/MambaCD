@@ -35,6 +35,7 @@
 * **` April 18th, 2024`**: We have released all weights of ChangeMamba models on BCD tasks. You are welcome [use them](#%EF%B8%8Fresults-taken-away)!!
 * **` April 12th, 2024`**: The new [[arXiv](https://arxiv.org/pdf/2404.03425.pdf)] version containing new accuracy and more experiments is now online!!
 * **` April 05th, 2024`**: The models and training code for MambaBCD, MambaSCD, and MambaBDA have been organized and uploaded. You are welcome to use them!!
+* **` Oct. 18th, 2024`**: Added support for a multi-class change detection model, implemented data augmentation techniques, introduced automatic class weighting, and updated file paths for better organization!
 
 ## 🔭Overview
 
@@ -99,11 +100,39 @@ project_path/MambaCD/pretrained_weight/
 ```
 
 ### `C. Data Preparation`
-***Binary/Multi change detection***
+***Binary change detection***
 
 The three datasets [SYSU](https://github.com/liumency/SYSU-CD), [LEVIR-CD+](https://chenhao.in/LEVIR/) and [WHU-CD](https://study.rsgis.whu.edu.cn/pages/download/building_dataset.html) are used for binary change detection experiments. Please download them and make them have the following folder/file structure:
 ```
 ${DATASET_ROOT}   # Dataset root directory, for example: /home/username/data/SYSU
+├── train
+│   ├── T1
+│   │   ├──00001.png
+│   │   ├──00002.png
+│   │   ├──00003.png
+│   │   ...
+│   │
+│   ├── T2
+│   │   ├──00001.png
+│   │   ... 
+│   │
+│   └── GT
+│       ├──00001.png 
+│       ...   
+│   
+├── test
+│   ├── ...
+│   ...
+│  
+├── train.txt   # Data name list, recording all the names of training data
+└── test.txt    # Data name list, recording all the names of testing data
+```
+
+***Multi change detection***
+
+(In preparation) The [AIHUB Dataset](https://www.aihub.or.kr/aihubdata/data/view.do?currMenu=115&topMenu=100&aihubDataSe=data&dataSetSn=491) is used for multi-class change detection experiments. Please download it and make it have the following folder/file structure:
+```
+${DATASET_ROOT}   # Dataset root directory, for example: /home/username/data/AIHUB
 ├── train
 │   ├── T1
 │   │   ├──00001.png
@@ -223,12 +252,14 @@ python script/train_MambaBCD.py  --dataset 'SYSU' \
 
 ***Multi change detection***
 
-The following commands show how to train and evaluate MambaBCD-Small on the SYSU dataset:
+The following commands show how to train and evaluate MambaBCD-Base on the AIHUB dataset:
 ```bash
 python script/train_MambaMCD.py  --dataset 'AIHUB' \
                                  --batch_size 16 \
                                  --crop_size 256 \
                                  --max_iters 320000 \
+                                 --auto_weight True \
+                                 --augment True \
                                  --model_type MambaBCD_Base \
                                  --model_param_path '<project_path>/MambaCD/changedetection/saved_models' \ 
                                  --train_dataset_path '<dataset_path>/AIHUB/train' \
@@ -298,6 +329,8 @@ python script/infer_MambaBCD.py  --dataset 'LEVIR-CD+' \
 ```
 
 ***Multi change detection***
+
+The following commands show how to infer binary change maps using trained MambaBCD-Base on the AIHUB dataset:
 
 ```bash
 python script/infer_MambaMCD.py  --dataset 'AIHUB' \

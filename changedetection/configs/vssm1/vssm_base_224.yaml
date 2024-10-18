@@ -2,7 +2,8 @@ MODEL:
   TYPE: vssm
   NAME: vssm1_base_0229
   DROP_PATH_RATE: 0.6
-  # NUM_CLASSES: 5
+  NUM_CLASSES: 5
+  CLASS_WEIGHT: [1, 1, 1, 1, 1] # must be the same as the number of classes
   VSSM:
     EMBED_DIM: 128
     DEPTHS: [ 2, 2, 15, 2 ]
@@ -15,6 +16,8 @@ MODEL:
     MLP_RATIO: 4.0
     DOWNSAMPLE: "v3"
     PATCHEMBED: "v2"
-
+DATA:
+  TARGET_CLASS: [1, 2]
+  AUG_TIMES: 4
 # 89.0 + 15.2 + 118min/e + 48G
 

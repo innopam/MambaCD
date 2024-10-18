@@ -63,11 +63,6 @@ class Inference(object):
         self.deep_model = self.deep_model.cuda()
         self.epoch = args.max_iters // args.batch_size
 
-        self.change_map_saved_path = os.path.join(args.result_saved_path, args.dataset, args.model_type, 'change_map')
-
-        if not os.path.exists(self.change_map_saved_path):
-            os.makedirs(self.change_map_saved_path)
-
         if args.resume is not None:
             if not os.path.isfile(args.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
@@ -79,13 +74,25 @@ class Inference(object):
                     model_dict[k] = v
             state_dict.update(model_dict)
             self.deep_model.load_state_dict(state_dict)
+            
+        init_saved_path = os.path.join(args.result_saved_path, args.dataset)
+        idx_list = []
+        pth_idx = text.find('/')
+        while pth_idx != -1:
+        	idx_list.append(pth_idx)
+        	pth_idx = args.resume.find('/', pth_idx +1)
+        each_change_map = args.resume[idx_list[-2]:idx_list[-1]+1] + '_' + args.resume[idx_list[-1]:-4]
+        self.change_map_saved_path = os.path.join(init_saved_path, each_change_map)
+
+        if not os.path.exists(self.change_map_saved_path):
+            os.makedirs(self.change_map_saved_path)
 
         self.deep_model.eval()
 
 
     def infer(self):
         torch.cuda.empty_cache()
-        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, 377, None, 'test')
+        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, args.crop_size, None, 'test')
         val_data_loader = DataLoader(dataset, batch_size=1, num_workers=12, drop_last=False)
         torch.cuda.empty_cache()
         self.evaluator.reset()
@@ -138,8 +145,8 @@ class Inference(object):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Training on SYSU/LEVIR-CD+/WHU-CD dataset")
-    parser.add_argument('--cfg', type=str, default='/home/songjian/project/MambaCD/VMamba/classification/configs/vssm1/vssm_base_224.yaml')
+    parser = argparse.ArgumentParser(description="Training on AIHUB dataset")
+    parser.add_argument('--cfg', type=str, default='../changedetection/configs/vssm1/vssm_base_224.yaml')
     parser.add_argument(
         "--opts",
         help="Modify config options by adding 'KEY VALUE' pairs. ",
@@ -147,17 +154,17 @@ def main():
         nargs='+',
     )
     parser.add_argument('--pretrained_weight_path', type=str)
-    parser.add_argument('--dataset', type=str, default='LEVIR-CD+')
-    parser.add_argument('--test_dataset_path', type=str, default='/home/songjian/project/datasets/SYSU/test')
-    parser.add_argument('--test_data_list_path', type=str, default='/home/songjian/project/datasets/SYSU/test_list.txt')
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--dataset', type=str, default='AIHUB')
+    parser.add_argument('--test_dataset_path', type=str, default='../data/AIHUB/test')
+    parser.add_argument('--test_data_list_path', type=str, default='../data/AIHUB/test.txt')
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--crop_size', type=int, default=256)
     parser.add_argument('--train_data_name_list', type=list)
     parser.add_argument('--test_data_name_list', type=list)
     parser.add_argument('--start_iter', type=int, default=0)
     parser.add_argument('--cuda', type=bool, default=True)
-    parser.add_argument('--max_iters', type=int, default=240000)
-    parser.add_argument('--model_type', type=str, default='MambaBCD_Tiny')
+    parser.add_argument('--max_iters', type=int, default=160000)
+    parser.add_argument('--model_type', type=str, default='MambaMCD')
     parser.add_argument('--result_saved_path', type=str, default='../results')
 
     parser.add_argument('--resume', type=str)
