@@ -260,21 +260,34 @@ class AugmentDatset(MultiChangeDetectionDatset):
     def __init__(self, dataset_path, data_list, crop_size, target_class, aug_times, max_iters=None, type='train', data_loader=img_loader):
         super().__init__(dataset_path, data_list, crop_size, max_iters, type, data_loader)
         self.crop_size = crop_size
-        self.aug_times = aug_times # 데이터 증강 횟수
-        self.target_class = target_class # 증강 타겟 클래스
+        self.aug_times = aug_times
+        self.target_class = target_class
         
         # 타겟 클래스를 포함한 영상 개수 및 인덱스 저장
+        self.class_dist = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
         cnt = 0
-        aug_idx = []
+        self.aug_idx = []
+        
         total_samples = len(self.data_list)
         for idx in tqdm(range(total_samples)):
             label_path = os.path.join(self.dataset_path, 'GT', self.data_list[idx])
             label = self.loader(label_path)
-            if np.isin(self.target_class, label).any():
-                aug_idx.append([idx])
+            unique_labels, counts = np.unique(label, return_counts=True)
+
+            # is_target 변수를 설정
+            is_target = np.isin(self.target_class, unique_labels)
+
+            if is_target.any():
+                self.aug_idx.append([idx])
                 cnt += self.aug_times
+
+            for label, count in zip(unique_labels, counts):
+                if is_target.any():
+                    self.class_dist[label] += count * self.aug_times
+                else:
+                    self.class_dist[label] += count
+        
         self.count = cnt
-        self.aug_idx = aug_idx
 
     def __augments(self, pre_img, post_img, label):
         # 데이터 변형
@@ -310,26 +323,27 @@ class AugmentDatset(MultiChangeDetectionDatset):
     def __len__(self):
         return self.count # init에서 계산한 데이터 수를 바탕으로 데이터셋 길이 결정
 
-def auto_weight(dataset):
-    all_labels = []
-    for _, _, labels, _ in tqdm(dataset):
-        all_labels.extend(labels.flatten())
-    unique_labels, counts = np.unique(all_labels, return_counts=True)
+def auto_weight(class_dist):
+    # 클래스 분포 출력
+    formatted_dist = {label: f"{count:,}" for label, count in class_dist.items()}
+    print("클래스 분포:", formatted_dist)
+
+    total_count = sum(class_dist.values())
+    num_classes = len(class_dist)
     
-    class_dist = {int(k): int(v) for k, v in zip(unique_labels, counts)}
-    print("클래스 분포:", class_dist)
-    
-    total_count = np.sum(counts)
-    num_classes = len(counts)
-    
+    # 각 클래스의 비율 계산 및 출력
+    class_percentage = {label: f"{(count / total_count * 100):.2f}%" for label, count in class_dist.items()}
+    print("클래스 비율:", class_percentage)
+
     # 제로 디비전 체크
+    counts = np.array(list(class_dist.values()))
     counts[counts == 0] = 1e-6  # 최소값으로 대체하여 제로 디비전 방지
-    
+
     class_weights = total_count / (num_classes * counts)
     norm_weights = class_weights / np.sum(class_weights)
-    
+
     print("정규화된 클래스 가중치:", norm_weights)
-    
+
     return norm_weights
 
 def make_data_loader(args, **kwargs):  # **kwargs could be omitted
@@ -346,15 +360,19 @@ def make_data_loader(args, **kwargs):  # **kwargs could be omitted
         if args.augment:
             dataset2 = AugmentDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, kwargs.get('target_class'), kwargs.get('aug_times'), args.max_iters, args.type)
             dataset = ConcatDataset([dataset1, dataset2])
+            if args.auto_weight:
+                class_weight = auto_weight(dataset2.class_dist)  # dataset2의 class_dist를 전달
         else:
             dataset = dataset1
+            if args.auto_weight:
+                dataset2 = AugmentDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, [], 1, args.max_iters, args.type)
+                class_weight = auto_weight(dataset2.class_dist)  # dataset1의 class_dist를 전달
         data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=12, pin_memory=True, drop_last=False)
 
-        if args.type == 'train' and args.auto_weight:
-            class_weight = auto_weight(dataset)
+        if args.auto_weight:
             return data_loader, class_weight
-
-        return data_loader
+        else:
+            return data_loader
         
     elif 'xBD' in args.dataset:
         dataset = DamageAssessmentDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, args.max_iters, args.type)

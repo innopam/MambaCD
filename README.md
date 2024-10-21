@@ -258,8 +258,8 @@ python script/train_MambaMCD.py  --dataset 'AIHUB' \
                                  --batch_size 16 \
                                  --crop_size 256 \
                                  --max_iters 320000 \
-                                 --auto_weight True \
-                                 --augment True \
+                                 --auto_weight \
+                                 --augment \
                                  --model_type MambaBCD_Base \
                                  --model_param_path '<project_path>/MambaCD/changedetection/saved_models' \ 
                                  --train_dataset_path '<dataset_path>/AIHUB/train' \

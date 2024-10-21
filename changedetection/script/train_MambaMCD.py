@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from torch.optim import lr_scheduler
 from tqdm import tqdm
 
@@ -88,7 +88,7 @@ class Trainer(object):
         if args.resume is not None:
             if not os.path.isfile(args.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
+            checkpoint = torch.load(args.resume, weights_only=True)
             model_dict = {}
             state_dict = self.deep_model.state_dict()
             for k, v in checkpoint.items():
@@ -116,7 +116,7 @@ class Trainer(object):
         class_weights = torch.tensor(self.class_weight, dtype=torch.float32).to(device)
 
         # Mixed Precision Scaler 객체 생성
-        scaler = GradScaler()
+        scaler = GradScaler('cuda')
 
         log_dir = os.path.join(self.model_save_path,'logs')  # 로그 저장 폴더
         os.makedirs(log_dir, exist_ok=True)
@@ -134,7 +134,7 @@ class Trainer(object):
             post_change_imgs = post_change_imgs.cuda()
             labels = labels.cuda().long()
 
-            with autocast():
+            with autocast(device_type='cuda'):
                 output_1 = self.deep_model(pre_change_imgs, post_change_imgs)
                 ce_loss_1 = F.cross_entropy(output_1, labels, weight=class_weights)
                 lovasz_loss = L.lovasz_softmax(F.softmax(output_1, dim=1), labels, class_weights=class_weights)
@@ -182,7 +182,7 @@ class Trainer(object):
     def validation(self, itera):
         print('---------starting evaluation-----------')
         self.evaluator.reset()
-        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, args.crop_size, None, 'test')
+        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, self.args.crop_size, None, 'test')
         val_data_loader = DataLoader(dataset, batch_size=6, num_workers=6, drop_last=False)
         torch.cuda.empty_cache()
 
@@ -258,8 +258,8 @@ def main():
     parser.add_argument('--learning_rate', type=float, default=5e-5)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=1e-4)
-    parser.add_argument('--auto_weight', type=bool, default=False)
-    parser.add_argument('--augment', type=bool, default=True)
+    parser.add_argument('--auto_weight', action='store_true', help='Enable automatic class weighting')
+    parser.add_argument('--augment', action='store_true', help='Enable augmentation')
 
     args = parser.parse_args()
     with open(args.train_data_list_path, "r") as f:
