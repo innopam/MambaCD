@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/workspace/Change_Detection')
+sys.path.append('/workspace/Change_Detection/innopam')
 
 import argparse
 import os
@@ -77,11 +77,11 @@ class Inference(object):
             
         init_saved_path = os.path.join(args.result_saved_path, args.dataset)
         idx_list = []
-        pth_idx = text.find('/')
+        pth_idx = args.resume.find('/')
         while pth_idx != -1:
         	idx_list.append(pth_idx)
         	pth_idx = args.resume.find('/', pth_idx +1)
-        each_change_map = args.resume[idx_list[-2]:idx_list[-1]+1] + '_' + args.resume[idx_list[-1]:-4]
+        each_change_map = args.resume[idx_list[-2]+1:idx_list[-1]] + args.resume[idx_list[-1]:-4]
         self.change_map_saved_path = os.path.join(init_saved_path, each_change_map)
 
         if not os.path.exists(self.change_map_saved_path):
@@ -92,7 +92,7 @@ class Inference(object):
 
     def infer(self):
         torch.cuda.empty_cache()
-        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, args.crop_size, None, 'test')
+        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, self.args.crop_size, None, 'test')
         val_data_loader = DataLoader(dataset, batch_size=1, num_workers=12, drop_last=False)
         torch.cuda.empty_cache()
         self.evaluator.reset()
@@ -121,7 +121,7 @@ class Inference(object):
     
                 imageio.imwrite(os.path.join(self.change_map_saved_path, image_name), change_map_image.astype(np.uint8))
 
-        f1_score = self.evaluator.Pixel_F1_score()
+        f1 = self.evaluator.Pixel_F1_score()
         oa = self.evaluator.Pixel_Accuracy()
         rec = self.evaluator.Pixel_Recall_Rate()
         pre = self.evaluator.Pixel_Precision_Rate()
@@ -133,12 +133,8 @@ class Inference(object):
         per_class_recall, per_class_precision = self.evaluator.calculate_per_class_metrics()[0], self.evaluator.calculate_per_class_metrics()[1]
         
         # 간단한 출력 (소수점 4자리까지)
-        print(f'Recall: {rec:.4f}, Precision: {pre:.4f}, F1: {f1_score:.4f}')
-        print(f'IoU: {iou:.4f}, OA: {oa:.4f}, Kappa: {kc:.4f}')
-        
-        print('Class-wise metrics:')
-        for i, (rec, pre, f1) in enumerate(zip(per_class_recall, per_class_precision, per_class_f1)):
-            print(f'Class {i}: Recall: {rec:.4f}, Precision: {pre:.4f}, F1: {f1:.4f}')
+        print(f'Recall: {np.mean(rec):.4f}, Precision: {np.mean(pre):.4f}, F1: {np.mean(f1):.4f}')
+        print(f'IoU: {np.mean(iou):.4f}, OA: {oa:.4f}, Kappa: {kc:.4f}')
     
         print('Inference stage is done!')
             
