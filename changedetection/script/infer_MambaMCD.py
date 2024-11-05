@@ -3,7 +3,7 @@ sys.path.append('/workspace/Change_Detection/innopam')
 
 import argparse
 import os
-import time
+import csv
 from tqdm import tqdm
 
 import numpy as np
@@ -89,13 +89,39 @@ class Inference(object):
 
         self.deep_model.eval()
 
-
     def infer(self):
         torch.cuda.empty_cache()
-        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, self.args.crop_size, None, 'test')
+        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, self.args.crop_size, None, self.args.type)
         val_data_loader = DataLoader(dataset, batch_size=1, num_workers=12, drop_last=False)
         torch.cuda.empty_cache()
         self.evaluator.reset()
+
+        # vbar = tqdm(val_data_loader, ncols=50)
+        with torch.no_grad():
+            for itera, data in tqdm(enumerate(val_data_loader)):
+                pre_change_imgs, post_change_imgs, names = data
+                pre_change_imgs = pre_change_imgs.cuda().float()
+                post_change_imgs = post_change_imgs.cuda()
+
+                output_1 = self.deep_model(pre_change_imgs, post_change_imgs)
+
+                output_1 = output_1.data.cpu().numpy()
+                output_1 = np.argmax(output_1, axis=1)
+            
+                image_name = names[0][0:-4] + f'.png'
+
+                change_map = np.squeeze(output_1)  # 멀티클래스 맵
+                change_map_image = visualize_class_map(change_map)  # 클래스를 색으로 변환하는 시각화 함수
+    
+                imageio.imwrite(os.path.join(self.change_map_saved_path, image_name), change_map_image.astype(np.uint8))
+
+    def test(self):
+        torch.cuda.empty_cache()
+        dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, self.args.crop_size, None, self.args.type)
+        val_data_loader = DataLoader(dataset, batch_size=1, num_workers=12, drop_last=False)
+        torch.cuda.empty_cache()
+        self.evaluator.reset()
+        infer_file = os.path.join(self.change_map_saved_path, f'inference_metrics.csv')
 
         # vbar = tqdm(val_data_loader, ncols=50)
         with torch.no_grad():
@@ -132,6 +158,11 @@ class Inference(object):
         per_class_f1 = self.evaluator.Damage_F1_socore()  # 클래스별 F1 점수
         per_class_recall, per_class_precision = self.evaluator.calculate_per_class_metrics()[0], self.evaluator.calculate_per_class_metrics()[1]
         
+        # 검증 결과 저장
+        with open(infer_file, mode='a') as f:
+            writer = csv.writer(f)
+            writer.writerow([rec, pre, f1, iou, oa, kc])
+        
         # 간단한 출력 (소수점 4자리까지)
         print(f'Recall: {np.mean(rec):.4f}, Precision: {np.mean(pre):.4f}, F1: {np.mean(f1):.4f}')
         print(f'IoU: {np.mean(iou):.4f}, OA: {oa:.4f}, Kappa: {kc:.4f}')
@@ -151,6 +182,7 @@ def main():
     )
     parser.add_argument('--pretrained_weight_path', type=str)
     parser.add_argument('--dataset', type=str, default='AIHUB')
+    parser.add_argument('--type', type=str, default='test')
     parser.add_argument('--test_dataset_path', type=str, default='../data/AIHUB/test')
     parser.add_argument('--test_data_list_path', type=str, default='../data/AIHUB/test.txt')
     parser.add_argument('--batch_size', type=int, default=8)
@@ -173,8 +205,10 @@ def main():
     args.test_data_name_list = test_data_name_list
 
     infer = Inference(args)
-    infer.infer()
-
+    if args.type == 'inference':
+        infer.infer()
+    else:
+        infer.test()
 
 if __name__ == "__main__":
     main()

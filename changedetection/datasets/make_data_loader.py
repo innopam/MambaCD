@@ -237,9 +237,21 @@ class MultiChangeDetectionDatset(Dataset):
     def __getitem__(self, index):
         pre_path = os.path.join(self.dataset_path, 'T1', self.data_list[index])
         post_path = os.path.join(self.dataset_path, 'T2', self.data_list[index])
-        label_path = os.path.join(self.dataset_path, 'GT', self.data_list[index])
         pre_img = self.loader(pre_path)
         post_img = self.loader(post_path)
+        
+        if 'inference' in self.data_pro_type:
+            pre_img = imutils.normalize_img(pre_img)  # imagenet normalization
+            pre_img = np.transpose(pre_img, (2, 0, 1))
+
+            post_img = imutils.normalize_img(post_img)  # imagenet normalization
+            post_img = np.transpose(post_img, (2, 0, 1))
+            
+            data_idx = self.data_list[index] 
+            
+            return pre_img, post_img, data_idx
+        
+        label_path = os.path.join(self.dataset_path, 'GT', self.data_list[index])
         label = self.loader(label_path)
     
         if 'train' in self.data_pro_type:
@@ -355,7 +367,7 @@ def make_data_loader(args, **kwargs):  # **kwargs could be omitted
         return data_loader
        
     # Multi-class 변화탐지 dataloader 추가
-    elif 'AIHUB' in args.dataset:
+    elif 'AIHUB' in args.dataset or 'INNOPAM' in args.dataset:
         dataset1 = MultiChangeDetectionDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, args.max_iters, args.type)
         if args.augment:
             dataset2 = AugmentDatset(args.train_dataset_path, args.train_data_name_list, args.crop_size, kwargs.get('target_class'), kwargs.get('aug_times'), args.max_iters, args.type)

@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 def visualize_class_map(class_map):
     # 예시: 클래스 0은 배경(흰색), 1은 신축(빨강), 2는 소멸(초록), 등으로 색상 지정
@@ -10,4 +11,26 @@ def visualize_class_map(class_map):
 
     # 클래스 맵을 색상 맵으로 변환
     colored_map = color_map[class_map]
+    return colored_map
+
+def visualize_confidence_map(confidence_map):
+    """
+    신뢰도 맵을 시각화하는 함수.
+
+    Parameters:
+    confidence_map (numpy.ndarray): 신뢰도 맵, 2D 배열 (H, W) 형태로 입력.
+
+    Returns:
+    numpy.ndarray: 시각화된 컬러 맵 이미지.
+    """
+    # 신뢰도 맵을 0-1 범위로 정규화
+    normalized_map = (confidence_map - np.min(confidence_map)) / (np.max(confidence_map) - np.min(confidence_map))
+
+    # 컬러 맵 적용 (여기서는 'viridis' 사용)
+    colormap = plt.get_cmap('viridis')
+    colored_map = colormap(normalized_map)  # RGBA 형태로 변환
+
+    # RGBA 이미지를 0-255 범위의 uint8로 변환
+    colored_map = (colored_map[:, :, :3] * 255).astype(np.uint8)  # alpha 채널 제거하고 0-255로 변환
+
     return colored_map

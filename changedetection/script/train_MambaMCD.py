@@ -77,6 +77,12 @@ class Trainer(object):
         self.lr = args.learning_rate
         self.epoch = args.max_iters // args.batch_size
         
+        self.optim = optim.AdamW(self.deep_model.parameters(),
+                                 lr=args.learning_rate,
+                                 weight_decay=args.weight_decay)
+        # Learning Rate Scheduler
+        self.scheduler = lr_scheduler.CosineAnnealingLR(self.optim, T_max=self.epoch)
+        
         init_save_path = os.path.join(args.model_param_path, args.dataset)
         if not os.path.exists(init_save_path):
             os.makedirs(init_save_path)
@@ -88,25 +94,43 @@ class Trainer(object):
         if args.resume is not None:
             if not os.path.isfile(args.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume, weights_only=True)
-            model_dict = {}
-            state_dict = self.deep_model.state_dict()
-            for k, v in checkpoint.items():
-                if k in state_dict:
-                    model_dict[k] = v
-            state_dict.update(model_dict)
-            self.deep_model.load_state_dict(state_dict)
+            checkpoint = torch.load(args.resume)
+            if 'model_state_dict' in checkpoint:
+                model_dict = {}
+                state_dict = self.deep_model.state_dict()
+                for k, v in checkpoint.items():
+                    if k in state_dict:
+                        model_dict[k] = v
+                state_dict.update(model_dict)
+                self.deep_model.load_state_dict(state_dict)
+                print("=> Loaded model weights from '{}'".format(args.resume))
+            else:
+                # 가중치만 있는 경우
+                print("=> No model state found, loading weights only")
+                state_dict = self.deep_model.state_dict()
+                for k, v in checkpoint.items():
+                    if k in state_dict:
+                        state_dict[k] = v
+                self.deep_model.load_state_dict(state_dict)
+               
+            # 추가 정보 로드 (있을 경우)
+            if 'optimizer_state_dict' in checkpoint and self.optim is not None:
+                self.optim.load_state_dict(checkpoint['optimizer_state_dict'])
+                print("=> Loaded optimizer state")
 
-        self.optim = optim.AdamW(self.deep_model.parameters(),
-                                 lr=args.learning_rate,
-                                 weight_decay=args.weight_decay)
-        # Learning Rate Scheduler
-        self.scheduler = lr_scheduler.CosineAnnealingLR(self.optim, T_max=self.epoch)
+            if 'epoch' in checkpoint:
+                self.start_epoch = checkpoint['epoch']
+                print("=> Loaded checkpoint at epoch {}".format(checkpoint['epoch']))
+
+            if 'scheduler_state_dict' in checkpoint and self.scheduler is not None:
+                self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                print("=> Loaded scheduler state")
 
     def training(self):
         best_kc = 0.0
         temp_iter, best_loss, threshold = 0, 1, 0.01
         best_round = []
+        temp_weight = None
         elem_num = len(self.train_data_loader)
         train_enumerator = enumerate(self.train_data_loader)
         torch.cuda.empty_cache()
@@ -159,22 +183,33 @@ class Trainer(object):
             if final_loss.item() < best_loss:
                 if (best_loss - final_loss.item()) < threshold:
                     best_loss = final_loss.item()
-                    temp_weight = self.deep_model.state_dict()
+                    temp_weight = {'model_state_dict': self.deep_model.state_dict(),
+                    'optimizer_state_dict': self.optim.state_dict(),
+                    'scheduler_state_dict': self.scheduler.state_dict(),
+                    'epoch': itera + 1
+                    }
                     temp_iter = itera+1
 
             if (itera + 1) % 100 == 0:
                 print(f'iter is {itera + 1}, overall loss is {final_loss.item():.4f}')
                 print(f'Best model epoch is {temp_iter}')
-                if (itera + 1) % 5000 == 0:
-                    torch.save(temp_weight, os.path.join(self.model_save_path, f'best_model_{temp_iter}.pth'))
+                if (itera + 1) % 4000 == 0:
+                    if temp_weight:
+                        torch.save(temp_weight, os.path.join(self.model_save_path, f'best_model_{temp_iter}.pth'))
                     self.deep_model.eval()
-                    rec, pre, oa, f1_score, iou, kc = self.validation(itera)
+                    rec, pre, oa, f1, iou, kc = self.validation(itera)
                     if kc > best_kc:
-                        torch.save(self.deep_model.state_dict(),
-                                   os.path.join(self.model_save_path, f'{itera + 1}_model.pth'))
+                        checkpoint = {
+                        'model_state_dict': self.deep_model.state_dict(),
+                        'optimizer_state_dict': self.optim.state_dict(),
+                        'scheduler_state_dict': self.scheduler.state_dict(),
+                        'epoch': itera + 1
+                        }
+                        torch.save(checkpoint,
+                        os.path.join(self.model_save_path, f'{itera + 1}_model.pth'))
                         best_kc = kc
                         best_round = itera
-                        best_val = [rec, pre, oa, f1_score, iou, kc]
+                        best_val = [rec, pre, oa, f1, iou, kc]
 
         print('The accuracy of the best round is ', best_round)
         print("Best round's validation is ", best_val)
@@ -183,7 +218,7 @@ class Trainer(object):
         print('---------starting evaluation-----------')
         self.evaluator.reset()
         dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, self.args.crop_size, None, 'test')
-        val_data_loader = DataLoader(dataset, batch_size=6, num_workers=6, drop_last=False)
+        val_data_loader = DataLoader(dataset, batch_size=self.args.batch_size, num_workers=12, drop_last=False)
         torch.cuda.empty_cache()
 
         log_dir = os.path.join(self.model_save_path,'logs')
@@ -209,7 +244,7 @@ class Trainer(object):
                 self.evaluator.add_batch(labels, output_1)
                 
         # 각 클래스별 Precision, Recall, F1, IoU 계산
-        f1_scores = self.evaluator.Pixel_F1_score()  # 각 클래스별 F1 score
+        f1 = self.evaluator.Pixel_F1_score()  # 각 클래스별 F1 score
         oa = self.evaluator.Pixel_Accuracy()  # 전체 정확도
         rec = self.evaluator.Pixel_Recall_Rate()  # 각 클래스별 Recall
         pre = self.evaluator.Pixel_Precision_Rate()  # 각 클래스별 Precision
@@ -219,12 +254,12 @@ class Trainer(object):
         # 검증 결과 저장
         with open(val_file, mode='a') as f:
             writer = csv.writer(f)
-            writer.writerow([rec, pre, f1_scores, iou, oa, kc])
+            writer.writerow([rec, pre, f1, iou, oa, kc])
             
-        print(f'Recall: {np.mean(rec):.4f}, Precision: {np.mean(pre):.4f}, F1: {np.mean(f1_scores):.4f}')
+        print(f'Recall: {np.mean(rec):.4f}, Precision: {np.mean(pre):.4f}, F1: {np.mean(f1):.4f}')
         print(f'IoU: {np.mean(iou):.4f}, OA: {oa:.4f}, Kappa: {kc:.4f}')
     
-        return np.mean(rec), np.mean(pre), oa, np.mean(f1_scores), np.mean(iou), kc
+        return np.mean(rec), np.mean(pre), oa, np.mean(f1), np.mean(iou), kc
 
 
 def main():

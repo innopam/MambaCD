@@ -12,3 +12,7 @@ submitit
 tensorboardX
 fvcore
 seaborn
+imageio
+rasterio
+geopandas
+tqdm
