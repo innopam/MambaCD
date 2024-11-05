@@ -1,7 +1,4 @@
 import os
-import sys
-sys.path.append('/workspace/Change_Detection/innopam')
-sys.path.append('/home/mharrach/hero/Change_Detection/innopam')
 
 import imageio.v2 as imageio
 import argparse
@@ -19,6 +16,7 @@ class Inferencer(object):
     def __init__(self, args):
         self.args = args
         config = get_config(args)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.deep_model = STMambaMCD(
             pretrained=None,
@@ -51,12 +49,12 @@ class Inferencer(object):
             gmlp=config.MODEL.VSSM.GMLP,
             use_checkpoint=config.TRAIN.USE_CHECKPOINT,
             ) 
-        self.deep_model = self.deep_model.cuda()
+        self.deep_model = self.deep_model.to(self.device)
 
         if args.resume is not None:
             if not os.path.isfile(args.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume, weights_only=True)
+            checkpoint = torch.load(args.resume, weights_only=True, map_location=self.device)
             model_dict = {}
             state_dict = self.deep_model.state_dict()
             for k, v in checkpoint.items():
@@ -86,8 +84,8 @@ class Inferencer(object):
             with tqdm(total=len(dataset), desc=f"Inferencing...") as pbar:
                 for itera, data in enumerate(val_data_loader):
                     pre_change_imgs, post_change_imgs, names = data
-                    pre_change_imgs = pre_change_imgs.cuda().float()
-                    post_change_imgs = post_change_imgs.cuda()
+                    pre_change_imgs = pre_change_imgs.to(self.device).float()
+                    post_change_imgs = post_change_imgs.to(self.device)
     
                     # 모델의 출력 가져오기
                     output_logits = self.deep_model(pre_change_imgs, post_change_imgs)

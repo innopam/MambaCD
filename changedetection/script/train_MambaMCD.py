@@ -82,7 +82,6 @@ class Trainer(object):
                                  weight_decay=args.weight_decay)
         # Learning Rate Scheduler
         self.scheduler = lr_scheduler.CosineAnnealingLR(self.optim, T_max=self.epoch)
-        
         init_save_path = os.path.join(args.model_param_path, args.dataset)
         if not os.path.exists(init_save_path):
             os.makedirs(init_save_path)
