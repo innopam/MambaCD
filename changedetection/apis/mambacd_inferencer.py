@@ -84,7 +84,7 @@ class Inferencer(object):
 
         with torch.no_grad():
             with tqdm(total=len(dataset), desc=f"Inferencing...") as pbar:
-                for itera, data in tqdm(enumerate(val_data_loader)):
+                for itera, data in enumerate(val_data_loader):
                     pre_change_imgs, post_change_imgs, names = data
                     pre_change_imgs = pre_change_imgs.cuda().float()
                     post_change_imgs = post_change_imgs.cuda()

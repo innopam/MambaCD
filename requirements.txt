@@ -16,3 +16,4 @@ imageio
 rasterio
 geopandas
 tqdm
+gdal==3.4.1
