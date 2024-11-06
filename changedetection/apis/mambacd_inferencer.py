@@ -13,8 +13,10 @@ from MambaCD.changedetection.utils_func.visualize import visualize_class_map
 from MambaCD.changedetection.models.MambaMCD import STMambaMCD
 
 class Inferencer(object):
-    def __init__(self, args):
+    def __init__(self, args, img_name):
         self.args = args
+        self.img_name = img_name
+        self.resume = [os.path.join(args.model_path, pth) for pth in os.listdir(args.model_path) if pth.endswith('.pth')][0]
         config = get_config(args)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -51,10 +53,10 @@ class Inferencer(object):
             ) 
         self.deep_model = self.deep_model.to(self.device)
 
-        if args.resume is not None:
-            if not os.path.isfile(args.resume):
-                raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume, weights_only=True, map_location=self.device)
+        if self.resume is not None:
+            if not os.path.isfile(self.resume):
+                raise RuntimeError("=> no checkpoint found at '{}'".format(self.resume))
+            checkpoint = torch.load(self.resume, weights_only=True, map_location=self.device)
             model_dict = {}
             state_dict = self.deep_model.state_dict()
             for k, v in checkpoint.items():
@@ -63,8 +65,11 @@ class Inferencer(object):
             state_dict.update(model_dict)
             self.deep_model.load_state_dict(state_dict)
 
-        self.change_map_saved_path = os.path.join(args.result_saved_path, 'pred')
-        self.confidence_map_saved_path = os.path.join(args.result_saved_path, 'confidence')
+        self.infer_dataset_path = os.path.join(args.output_path, 'patches', self.img_name)
+        self.result_saved_path = os.path.join(args.output_path, 'results', self.img_name)
+
+        self.change_map_saved_path = os.path.join(self.result_saved_path, 'pred')
+        self.confidence_map_saved_path = os.path.join(self.result_saved_path, 'confidence')
 
         if not os.path.exists(self.change_map_saved_path):
             os.makedirs(self.change_map_saved_path)
@@ -76,7 +81,7 @@ class Inferencer(object):
 
     def infer(self):
         torch.cuda.empty_cache()
-        dataset = MultiChangeDetectionDatset(self.args.infer_dataset_path, self.args.infer_data_name_list, 256, None, 'inference')
+        dataset = MultiChangeDetectionDatset(self.infer_dataset_path, self.args.data_name_list, 256, None, 'inference')
         val_data_loader = DataLoader(dataset, batch_size=1, num_workers=12, drop_last=False)
         torch.cuda.empty_cache()
 

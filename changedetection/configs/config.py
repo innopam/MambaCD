@@ -235,7 +235,11 @@ def _update_config_from_file(config, cfg_file):
 
 
 def update_config(config, args):
-    _update_config_from_file(config, args.cfg)
+    cfg_file = getattr(args, 'cfg', None)
+    if not cfg_file:
+        cfg_file = [os.path.join(args.model_path, config) for config in os.listdir(args.model_path) if config.endswith('.yaml')][0]
+
+    _update_config_from_file(config, cfg_file)
 
     config.defrost()
     if args.opts:
