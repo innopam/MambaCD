@@ -12,7 +12,6 @@ from MambaCD.changedetection.configs.config import get_config
 
 import torch
 import torch.nn.functional as F
-import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from MambaCD.changedetection.datasets.make_data_loader import MultiChangeDetectionDatset, make_data_loader
@@ -27,7 +26,7 @@ class Inference(object):
         self.args = args
         config = get_config(args)
 
-        self.evaluator = Evaluator(num_class=5)
+        self.evaluator = Evaluator(config.MODEL.NUM_CLASSES)
 
         self.deep_model = STMambaMCD(
             pretrained=args.pretrained_weight_path,
@@ -67,13 +66,23 @@ class Inference(object):
             if not os.path.isfile(args.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
             checkpoint = torch.load(args.resume, weights_only=True)
-            model_dict = {}
-            state_dict = self.deep_model.state_dict()
-            for k, v in checkpoint.items():
-                if k in state_dict:
-                    model_dict[k] = v
-            state_dict.update(model_dict)
-            self.deep_model.load_state_dict(state_dict)
+            if 'model_state_dict' in checkpoint:
+                model_dict = {}
+                state_dict = self.deep_model.state_dict()
+                for k, v in checkpoint['model_state_dict'].items():
+                    if k in state_dict:
+                        model_dict[k] = v
+                state_dict.update(model_dict)
+                self.deep_model.load_state_dict(state_dict)
+                print("=> Loaded model weights from '{}'".format(args.resume))
+            else:
+                # 가중치만 있는 경우
+                print("=> No model state found, loading weights only")
+                state_dict = self.deep_model.state_dict()
+                for k, v in checkpoint.items():
+                    if k in state_dict:
+                        state_dict[k] = v
+                self.deep_model.load_state_dict(state_dict)
             
         init_saved_path = os.path.join(args.result_saved_path, args.dataset)
         idx_list = []
@@ -116,36 +125,38 @@ class Inference(object):
                 imageio.imwrite(os.path.join(self.change_map_saved_path, image_name), change_map_image.astype(np.uint8))
 
     def test(self):
-        torch.cuda.empty_cache()
         dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, self.args.crop_size, None, self.args.type)
-        val_data_loader = DataLoader(dataset, batch_size=1, num_workers=12, drop_last=False)
+        val_data_loader = DataLoader(dataset, batch_size=1, num_workers=6, drop_last=False)
         torch.cuda.empty_cache()
         self.evaluator.reset()
-        infer_file = os.path.join(self.change_map_saved_path, f'inference_metrics.csv')
 
-        # vbar = tqdm(val_data_loader, ncols=50)
+        infer_file = os.path.join(os.path.split(self.change_map_saved_path[:-1])[0], f'inference_metrics.csv')
+
         with torch.no_grad():
-            for itera, data in tqdm(enumerate(val_data_loader)):
-                pre_change_imgs, post_change_imgs, labels, names = data
-                pre_change_imgs = pre_change_imgs.cuda().float()
-                post_change_imgs = post_change_imgs.cuda()
-                labels = labels.cuda().long()
-
-                output_1 = self.deep_model(pre_change_imgs, post_change_imgs)
-
-                output_1 = output_1.data.cpu().numpy()
-                output_1 = np.argmax(output_1, axis=1)
-                labels = labels.cpu().numpy()
-            
-                self.evaluator.add_batch(labels, output_1)
-            
-            
-                image_name = names[0][0:-4] + f'.png'
-
-                change_map = np.squeeze(output_1)  # 멀티클래스 맵
-                change_map_image = visualize_class_map(change_map)  # 클래스를 색으로 변환하는 시각화 함수
+            with tqdm(total=len(dataset), desc=f"Predicting...") as pbar:
+                for itera, data in enumerate(val_data_loader):
+                    pre_change_imgs, post_change_imgs, labels, names = data
+                    pre_change_imgs = pre_change_imgs.cuda().float()
+                    post_change_imgs = post_change_imgs.cuda()
+                    labels = labels.cuda()
     
-                imageio.imwrite(os.path.join(self.change_map_saved_path, image_name), change_map_image.astype(np.uint8))
+                    output_1 = self.deep_model(pre_change_imgs, post_change_imgs)
+    
+                    output_1 = output_1.data.cpu().numpy()
+                    output_1 = np.argmax(output_1, axis=1)
+                    labels = labels.cpu().numpy()
+                
+                    self.evaluator.add_batch(labels, output_1)
+                
+                
+                    image_name = names[0][0:-4] + f'.png'
+    
+                    change_map = np.squeeze(output_1)  # 멀티클래스 맵
+                    change_map_image = visualize_class_map(change_map)  # 클래스를 색으로 변환하는 시각화 함수
+        
+                    imageio.imwrite(os.path.join(self.change_map_saved_path, image_name), change_map_image.astype(np.uint8))
+                    
+                    pbar.update(1)
 
         f1 = self.evaluator.Pixel_F1_score()
         oa = self.evaluator.Pixel_Accuracy()
@@ -153,15 +164,13 @@ class Inference(object):
         pre = self.evaluator.Pixel_Precision_Rate()
         iou = self.evaluator.Intersection_over_Union()
         kc = self.evaluator.Kappa_coefficient()
-    
-        # 클래스별 성능 지표 출력
-        per_class_f1 = self.evaluator.Damage_F1_socore()  # 클래스별 F1 점수
-        per_class_recall, per_class_precision = self.evaluator.calculate_per_class_metrics()[0], self.evaluator.calculate_per_class_metrics()[1]
+        cm = self.evaluator.out_matrix()
         
         # 검증 결과 저장
         with open(infer_file, mode='a') as f:
             writer = csv.writer(f)
             writer.writerow([rec, pre, f1, iou, oa, kc])
+            writer.writerow(cm)
         
         # 간단한 출력 (소수점 4자리까지)
         print(f'Recall: {np.mean(rec):.4f}, Precision: {np.mean(pre):.4f}, F1: {np.mean(f1):.4f}')

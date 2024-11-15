@@ -10,13 +10,12 @@ from torch.utils.data import Dataset, ConcatDataset
 
 import MambaCD.changedetection.datasets.imutils as imutils
 
-
 def img_loader(path):
     img = np.array(imageio.imread(path), np.float32)
     return img
 
 
-def one_hot_encoding(image, num_classes=8):
+def one_hot_encoding(image, num_classes=5):
     # Create a one hot encoded tensor
     one_hot = np.eye(num_classes)[image.astype(np.uint8)]
 
@@ -278,7 +277,6 @@ class AugmentDatset(MultiChangeDetectionDatset):
         # 타겟 클래스를 포함한 영상 개수 및 인덱스 저장
         self.class_dist = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
         cnt = 0
-        self.aug_idx = []
         
         total_samples = len(self.data_list)
         for idx in tqdm(range(total_samples)):
@@ -288,15 +286,24 @@ class AugmentDatset(MultiChangeDetectionDatset):
 
             # is_target 변수를 설정
             is_target = np.isin(self.target_class, unique_labels)
-
             if is_target.any():
-                self.aug_idx.append([idx])
                 cnt += self.aug_times
-
+                self.data_list = self.data_list + [self.data_list[idx]]*self.aug_times
+                
+            if aug_times >= 3:
+                target_class2 = [x for x in [1,2,3,4] if x not in self.target_class]
+                is_target2 = np.isin(target_class2, unique_labels)
+                if is_target2.any():
+                    cnt += int(self.aug_times//3)
+                    self.data_list = self.data_list + [self.data_list[idx]]*int(self.aug_times//3)
+            	
             for label, count in zip(unique_labels, counts):
                 if is_target.any():
                     self.class_dist[label] += count * self.aug_times
                 else:
+                    if aug_times >=3:
+                        if is_target2.any():
+                            self.class_dist[label] += count * int(self.aug_times//3)
                     self.class_dist[label] += count
         
         self.count = cnt
@@ -317,7 +324,7 @@ class AugmentDatset(MultiChangeDetectionDatset):
         return aug_pre_img, aug_post_img, aug_label
 
     def __getitem__(self, index):
-        aug_data_list = [x for x in self.data_list for _ in range(self.aug_times)] # 데이터 리스트 복제
+        aug_data_list = self.data_list
         pre_path = os.path.join(self.dataset_path, 'T1', aug_data_list[index])
         post_path = os.path.join(self.dataset_path, 'T2', aug_data_list[index])
         label_path = os.path.join(self.dataset_path, 'GT', aug_data_list[index])
@@ -327,15 +334,15 @@ class AugmentDatset(MultiChangeDetectionDatset):
 
         aug_pre_img, aug_post_img, aug_label = self.__augments(pre_img, post_img, label)
         aug_label = aug_label.astype(np.int64)
+        
+        aug_data_idx = aug_data_list[index]
 
-        # 증강 데이터 인덱스 부여
-        aug_data_idx = f"aug_{self.data_list[index][:-4]}_{index%self.aug_times+1}.png"
         return aug_pre_img, aug_post_img, aug_label, aug_data_idx
         
     def __len__(self):
         return self.count # init에서 계산한 데이터 수를 바탕으로 데이터셋 길이 결정
 
-def auto_weight(class_dist):
+def auto_weight(class_dist, alpha=0.7):
     # 클래스 분포 출력
     formatted_dist = {label: f"{count:,}" for label, count in class_dist.items()}
     print("클래스 분포:", formatted_dist)
@@ -351,7 +358,7 @@ def auto_weight(class_dist):
     counts = np.array(list(class_dist.values()))
     counts[counts == 0] = 1e-6  # 최소값으로 대체하여 제로 디비전 방지
 
-    class_weights = total_count / (num_classes * counts)
+    class_weights = (total_count / (num_classes * counts)) ** alpha
     norm_weights = class_weights / np.sum(class_weights)
 
     print("정규화된 클래스 가중치:", norm_weights)

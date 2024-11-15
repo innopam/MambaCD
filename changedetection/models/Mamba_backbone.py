@@ -26,7 +26,7 @@ class Backbone_VSSM(VSSM):
         del self.classifier
         self.load_pretrained(pretrained)
 
-    def load_pretrained(self, ckpt=None, key="model"):
+    def load_pretrained(self, ckpt=None, key="model_state_dict"):
         if ckpt is None:
             return
         

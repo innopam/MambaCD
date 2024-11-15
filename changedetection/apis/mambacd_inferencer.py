@@ -56,14 +56,24 @@ class Inferencer(object):
         if self.resume is not None:
             if not os.path.isfile(self.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(self.resume))
-            checkpoint = torch.load(self.resume, weights_only=True, map_location=self.device)
-            model_dict = {}
-            state_dict = self.deep_model.state_dict()
-            for k, v in checkpoint.items():
-                if k in state_dict:
-                    model_dict[k] = v
-            state_dict.update(model_dict)
-            self.deep_model.load_state_dict(state_dict)
+            checkpoint = torch.load(self.resume, weights_only=True)
+            if 'model_state_dict' in checkpoint:
+                model_dict = {}
+                state_dict = self.deep_model.state_dict()
+                for k, v in checkpoint['model_state_dict'].items():
+                    if k in state_dict:
+                        model_dict[k] = v
+                state_dict.update(model_dict)
+                self.deep_model.load_state_dict(state_dict)
+                print("=> Loaded model weights from '{}'".format(self.resume))
+            else:
+                # 가중치만 있는 경우
+                print("=> No model state found, loading weights only")
+                state_dict = self.deep_model.state_dict()
+                for k, v in checkpoint.items():
+                    if k in state_dict:
+                        state_dict[k] = v
+                self.deep_model.load_state_dict(state_dict)
 
         self.infer_dataset_path = os.path.join(args.output_path, 'patches', self.img_name)
         self.result_saved_path = os.path.join(args.output_path, 'results', self.img_name)

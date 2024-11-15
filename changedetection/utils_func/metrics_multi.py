@@ -36,27 +36,6 @@ class Evaluator(object):
         f1_scores = self.Pixel_F1_score()
         return np.mean(f1_scores)
 
-    def calculate_per_class_metrics(self):
-        # Adjustments to exclude class 0 in calculations
-        TPs = np.diag(self.confusion_matrix)[1:]  # Start from index 1 to exclude class 0
-        FNs = np.sum(self.confusion_matrix, axis=1)[1:] - TPs
-        FPs = np.sum(self.confusion_matrix, axis=0)[1:] - TPs
-        return TPs, FNs, FPs
-    
-    def Damage_F1_socore(self):
-        TPs, FNs, FPs = self.calculate_per_class_metrics()
-        precisions = TPs / (TPs + FPs + 1e-7)
-        recalls = TPs / (TPs + FNs + 1e-7)
-        f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-7)
-        return f1_scores
-    
-    def Mean_Intersection_over_Union(self):
-        MIoU = np.diag(self.confusion_matrix) / (
-                np.sum(self.confusion_matrix, axis=1) + np.sum(self.confusion_matrix, axis=0) -
-                np.diag(self.confusion_matrix) + 1e-7)
-        MIoU = np.nanmean(MIoU)
-        return MIoU
-
     def Intersection_over_Union(self):
         # 각 클래스에 대한 IoU 계산
         ious = np.diag(self.confusion_matrix) / (
@@ -99,3 +78,7 @@ class Evaluator(object):
 
     def reset(self):
         self.confusion_matrix = np.zeros((self.num_class,) * 2)
+        
+    def out_matrix(self):
+    	confusion_matrix = self.confusion_matrix
+    	return confusion_matrix
