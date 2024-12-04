@@ -26,10 +26,9 @@ class Backbone_VSSM(VSSM):
         del self.classifier
         self.load_pretrained(pretrained)
 
-    def load_pretrained(self, ckpt=None, key="model_state_dict"):
+    def load_pretrained(self, ckpt=None, key="model"):
         if ckpt is None:
-            return
-        
+            return        
         try:
             _ckpt = torch.load(open(ckpt, "rb"), map_location=torch.device("cpu"), weights_only=True)
             print(f"Successfully load ckpt {ckpt}")

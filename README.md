@@ -37,6 +37,7 @@
 * **` April 05th, 2024`**: The models and training code for MambaBCD, MambaSCD, and MambaBDA have been organized and uploaded. You are welcome to use them!!
 * **` Oct. 18th, 2024`**: Added support for a multi-class change detection model, implemented data augmentation techniques, introduced automatic class weighting, and updated file paths for better organization!!
 * **` Nov. 5th, 2024`**: Added API service!!
+* **` Dec. 4th, 2024`**: Training process has been changed!!
 
 ## 🔭Overview
 

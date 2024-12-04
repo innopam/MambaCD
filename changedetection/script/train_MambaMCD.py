@@ -16,7 +16,7 @@ from torch.amp import autocast, GradScaler
 from torch.optim import lr_scheduler
 from tqdm import tqdm
 
-from MambaCD.changedetection.datasets.make_data_loader import MultiChangeDetectionDatset, make_data_loader, auto_weight
+from MambaCD.changedetection.datasets.make_data_loader import MultiChangeDetectionDatset, make_data_loader
 from MambaCD.changedetection.utils_func.metrics_multi import Evaluator
 from MambaCD.changedetection.models.MambaMCD import STMambaMCD
 
@@ -29,18 +29,7 @@ class Trainer(object):
         self.args = args
         config = get_config(args)
         
-        if self.args.auto_weight:
-            if self.args.augment:
-                self.train_data_loader, self.class_weight = make_data_loader(args, target_class=config.DATA.TARGET_CLASS, aug_times=config.DATA.AUG_TIMES)
-            else:
-                self.train_data_loader, self.class_weight = make_data_loader(args)
-        else:
-            if self.args.augment:
-                self.train_data_loader = make_data_loader(args, target_class=config.DATA.TARGET_CLASS, aug_times=config.DATA.AUG_TIMES)
-                self.class_weight = config.MODEL.CLASS_WEIGHT
-            else:
-                self.train_data_loader = make_data_loader(args, config)
-                self.class_weight = config.MODEL.CLASS_WEIGHT
+        self.train_data_loader = make_data_loader(args)
 
         self.evaluator = Evaluator(config.MODEL.NUM_CLASSES)
 
@@ -87,7 +76,7 @@ class Trainer(object):
         init_save_path = os.path.join(args.model_param_path, args.dataset)
         if not os.path.exists(init_save_path):
             os.makedirs(init_save_path)
-        model_result = args.model_type + '_' + str(len(os.listdir(init_save_path)))
+        model_result = args.model_type + '_' + str(len(os.listdir(init_save_path))+1)
         self.model_save_path = os.path.join(init_save_path, model_result)
         if not os.path.exists(self.model_save_path):
             os.makedirs(self.model_save_path)
@@ -96,7 +85,16 @@ class Trainer(object):
             if not os.path.isfile(args.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
             checkpoint = torch.load(args.resume, weights_only=True)
-            if 'model_state_dict' in checkpoint:
+            if 'model' in checkpoint:
+                model_dict = {}
+                state_dict = self.deep_model.state_dict()
+                for k, v in checkpoint['model'].items():
+                    if k in state_dict:
+                        model_dict[k] = v
+                state_dict.update(model_dict)
+                self.deep_model.load_state_dict(state_dict)
+                print("=> Loaded model weights from '{}'".format(args.resume))
+            elif 'model_state_dict' in checkpoint:
                 model_dict = {}
                 state_dict = self.deep_model.state_dict()
                 for k, v in checkpoint['model_state_dict'].items():
@@ -129,16 +127,17 @@ class Trainer(object):
 
     def training(self):
         best_kc = 0.0
-        temp_iter, best_loss, threshold = 0, 0.5, 0.05
+        temp_iter, best_loss, threshold = 0, 0.5, 0.005
         best_round = []
         temp_weight = None
+        class_dist = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
         elem_num = len(self.train_data_loader)
         train_enumerator = enumerate(self.train_data_loader)
         torch.cuda.empty_cache()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # 클래스 가중치 설정
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        class_weights = torch.tensor(self.class_weight, dtype=torch.float32).to(device)
+        class_weights = torch.tensor([1, 1, 1, 1, 1], dtype=torch.float32).to(device)
 
         # Mixed Precision Scaler 객체 생성
         scaler = GradScaler('cuda')
@@ -155,6 +154,9 @@ class Trainer(object):
         for _ in tqdm(range(elem_num)):
             itera, data = train_enumerator.__next__()
             pre_change_imgs, post_change_imgs, labels, _ = data
+            unique_labels, counts = np.unique(labels, return_counts=True)
+            for label, count in zip(unique_labels, counts):
+                class_dist[label] += count
             pre_change_imgs = pre_change_imgs.cuda()
             post_change_imgs = post_change_imgs.cuda()
             labels = labels.cuda().long()
@@ -162,12 +164,13 @@ class Trainer(object):
             with autocast(device_type='cuda'):
                 output_1 = self.deep_model(pre_change_imgs, post_change_imgs)
                 
-                # ce_loss_1 = F.cross_entropy(output_1, labels, weight=class_weights)
-                # lovasz_loss = L.lovasz_softmax(F.softmax(output_1, dim=1), labels, class_weights=class_weights)
+                # ce_loss_1 = F.cross_entropy(output_1, labels)
+                # lovasz_loss = L.lovasz_softmax(F.softmax(output_1, dim=1), labels)
                 # main_loss = ce_loss_1 + 0.75 * lovasz_loss
                 
                 focal_loss_1 = C.focal_loss(output_1, labels, class_weights=class_weights)
                 dice_loss_1 = C.dice_loss(output_1, labels)
+                # iou_loss_1 = C.iou_loss(output_1, labels)
                 main_loss = focal_loss_1 + 0.75 * dice_loss_1
                 
                 final_loss = main_loss.mean()
@@ -191,7 +194,7 @@ class Trainer(object):
                 best_loss = final_loss.item()
             if final_loss.item() < best_loss and (best_loss - final_loss.item()) < threshold:
                 best_loss = final_loss.item()
-                temp_weight = {'model_state_dict': self.deep_model.state_dict(),
+                temp_weight = {'model': self.deep_model.state_dict(),
                 'optimizer_state_dict': self.optim.state_dict(),
                 'scheduler_state_dict': self.scheduler.state_dict(),
                 'epoch': itera + 1
@@ -199,16 +202,16 @@ class Trainer(object):
                 temp_iter = itera+1
 
             if (itera + 1) % 100 == 0:
-                print(f'iter is {itera + 1}, overall loss is {final_loss.item():.4f}')
-                print(f'Best model epoch is {temp_iter}')
-                if (itera + 1) % 4000 == 0:
+                print(f'overall loss is {final_loss.item():.4f}')
+                class_weights = torch.tensor(C.cal_class_weight(class_dist, itera), dtype=torch.float32).to(device)
+                if (itera + 1) % 5000 == 0:
                     if temp_weight:
                         torch.save(temp_weight, os.path.join(self.model_save_path, f'best_model_{temp_iter}.pth'))
                     self.deep_model.eval()
                     rec, pre, oa, f1, iou, kc = self.validation(itera)
                     if kc > best_kc:
                         checkpoint = {
-                        'model_state_dict': self.deep_model.state_dict(),
+                        'model': self.deep_model.state_dict(),
                         'optimizer_state_dict': self.optim.state_dict(),
                         'scheduler_state_dict': self.scheduler.state_dict(),
                         'epoch': itera + 1
@@ -302,11 +305,11 @@ def main():
     parser.add_argument('--model_param_path', type=str, default='../saved_models')
 
     parser.add_argument('--resume', type=str)
-    parser.add_argument('--learning_rate', type=float, default=1e-4)
+    parser.add_argument('--learning_rate', type=float, default=5e-4)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
-    parser.add_argument('--auto_weight', action='store_true', help='Enable automatic class weighting')
-    parser.add_argument('--augment', action='store_true', help='Enable augmentation')
+#    parser.add_argument('--auto_weight', action='store_true', help='Enable automatic class weighting')
+#    parser.add_argument('--augment', action='store_true', help='Enable augmentation')
 
     args = parser.parse_args()
     with open(args.train_data_list_path, "r") as f:

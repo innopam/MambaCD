@@ -1,5 +1,6 @@
+import csv
 import numpy as np
-
+from skimage.measure import label, regionprops
 
 class Evaluator(object):
     def __init__(self, num_class):
@@ -78,6 +79,63 @@ class Evaluator(object):
 
     def reset(self):
         self.confusion_matrix = np.zeros((self.num_class,) * 2)
+        
+    def cal_tp(self, gt_label, pred_label, path, image_name, threshold=0.3):
+        tp1, tp2 = 0, 0
+        iou_test = path
+        image_name = image_name
+        
+        gt_label = np.squeeze(gt_label)
+        pred_label = np.squeeze(pred_label)
+        # 정답 데이터에서 객체 추출
+        gt_labeled = label(gt_label > 0, connectivity=1)
+        gt_regions = regionprops(gt_labeled)
+        total1 = int(gt_labeled.max())
+
+        # 예측 데이터에서 객체 추출
+        pred_labeled = label(pred_label > 0, connectivity=1)
+        pred_regions = regionprops(pred_labeled)
+        total2 = int(pred_labeled.max())
+        
+        for i in range(len(gt_regions)):
+            gt_region = gt_regions[i]
+            # 정답 객체의 클래스 및 픽셀 좌표
+            gt_coords = set(map(tuple, gt_region.coords))
+            gt_class = gt_label[gt_region.coords[0][0], gt_region.coords[0][1]]
+            
+            for j in range(len(pred_regions)):
+                pred_region = pred_regions[j]
+                # 예측 객체의 클래스 및 픽셀 좌표
+                pred_coords = set(map(tuple, pred_region.coords))
+                pred_class = pred_label[pred_region.coords[0][0], pred_region.coords[0][1]]
+
+                # 클래스가 동일하지 않으면 비교하지 않음
+                if gt_class != pred_class:
+                    continue
+
+                # 두 객체 간 중첩된 픽셀 계산
+                intersection = gt_coords & pred_coords
+                intersection_size = len(intersection)
+
+                # 각 객체의 크기 계산
+                gt_size = len(gt_coords)
+                pred_size = len(pred_coords)
+
+                # 중첩 비율 계산
+                gt_overlap = intersection_size / gt_size
+                pred_overlap = intersection_size / pred_size
+                
+                with open(iou_test, mode='a') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([image_name, i, j, gt_class, f'{gt_overlap*100:.2f}%'])
+
+                # 클래스가 동일하고 중첩 비율이 threshold 이상이면 True 반환
+                if gt_overlap >= threshold:
+                    tp1 += 1
+                elif pred_overlap >= threshold:
+                    tp2 += 1
+                    
+        return tp1, tp2, total1, total2, 
         
     def out_matrix(self):
     	confusion_matrix = self.confusion_matrix

@@ -57,7 +57,16 @@ class Inferencer(object):
             if not os.path.isfile(self.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(self.resume))
             checkpoint = torch.load(self.resume, weights_only=True)
-            if 'model_state_dict' in checkpoint:
+            if 'model' in checkpoint:
+                model_dict = {}
+                state_dict = self.deep_model.state_dict()
+                for k, v in checkpoint['model'].items():
+                    if k in state_dict:
+                        model_dict[k] = v
+                state_dict.update(model_dict)
+                self.deep_model.load_state_dict(state_dict)
+                print("=> Loaded model weights from '{}'".format(self.resume))
+            elif 'model_state_dict' in checkpoint:
                 model_dict = {}
                 state_dict = self.deep_model.state_dict()
                 for k, v in checkpoint['model_state_dict'].items():

@@ -66,7 +66,16 @@ class Inference(object):
             if not os.path.isfile(args.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
             checkpoint = torch.load(args.resume, weights_only=True)
-            if 'model_state_dict' in checkpoint:
+            if 'model' in checkpoint:
+                model_dict = {}
+                state_dict = self.deep_model.state_dict()
+                for k, v in checkpoint['model'].items():
+                    if k in state_dict:
+                        model_dict[k] = v
+                state_dict.update(model_dict)
+                self.deep_model.load_state_dict(state_dict)
+                print("=> Loaded model weights from '{}'".format(args.resume))
+            elif 'model_state_dict' in checkpoint:
                 model_dict = {}
                 state_dict = self.deep_model.state_dict()
                 for k, v in checkpoint['model_state_dict'].items():
@@ -126,11 +135,17 @@ class Inference(object):
 
     def test(self):
         dataset = MultiChangeDetectionDatset(self.args.test_dataset_path, self.args.test_data_name_list, self.args.crop_size, None, self.args.type)
+        tp1, tp2, total1, total2 = 0, 0, 0, 0
         val_data_loader = DataLoader(dataset, batch_size=1, num_workers=6, drop_last=False)
         torch.cuda.empty_cache()
         self.evaluator.reset()
 
         infer_file = os.path.join(os.path.split(self.change_map_saved_path[:-1])[0], f'inference_metrics.csv')
+        iou_test = os.path.join(os.path.split(self.change_map_saved_path[:-1])[0], f'iou_test.csv')
+        
+        with open(iou_test, mode='w') as f:
+            writer = csv.writer(f)
+            writer.writerow(['IMG_NAME', 'GT_NUM', 'PRED_NUM', 'CLASS', 'OVERLAP_RATIO'])
 
         with torch.no_grad():
             with tqdm(total=len(dataset), desc=f"Predicting...") as pbar:
@@ -147,13 +162,17 @@ class Inference(object):
                     labels = labels.cpu().numpy()
                 
                     self.evaluator.add_batch(labels, output_1)
-                
-                
+                    
                     image_name = names[0][0:-4] + f'.png'
-    
+                    
+                    cnt1, cnt2, cnt3, cnt4 = self.evaluator.cal_tp(labels, output_1, iou_test, image_name)
+                    tp1 += cnt1
+                    tp2 += cnt2
+                    total1 += cnt3
+                    total2 += cnt4
+
                     change_map = np.squeeze(output_1)  # 멀티클래스 맵
                     change_map_image = visualize_class_map(change_map)  # 클래스를 색으로 변환하는 시각화 함수
-        
                     imageio.imwrite(os.path.join(self.change_map_saved_path, image_name), change_map_image.astype(np.uint8))
                     
                     pbar.update(1)
@@ -171,10 +190,13 @@ class Inference(object):
             writer = csv.writer(f)
             writer.writerow([rec, pre, f1, iou, oa, kc])
             writer.writerow(cm)
+            writer.writerow([tp1, tp2, total1, total2])
         
         # 간단한 출력 (소수점 4자리까지)
         print(f'Recall: {np.mean(rec):.4f}, Precision: {np.mean(pre):.4f}, F1: {np.mean(f1):.4f}')
         print(f'IoU: {np.mean(iou):.4f}, OA: {oa:.4f}, Kappa: {kc:.4f}')
+        
+        print(f'True Positive(GT): {tp1}/{total1}, True Positive(Pred): {tp2}/{total2}')
     
         print('Inference stage is done!')
             
