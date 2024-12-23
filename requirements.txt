@@ -17,3 +17,5 @@ rasterio
 geopandas
 tqdm
 gdal==3.4.1
+scikit-image
+shapely
