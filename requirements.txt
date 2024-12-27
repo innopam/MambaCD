@@ -1,4 +1,5 @@
 torch
+ray
 torchvision
 torchaudio
 packaging
@@ -14,6 +15,6 @@ fvcore
 seaborn
 imageio
 rasterio
-geopandas
 tqdm
-gdal==3.4.1
+scikit-image
+shapely
