@@ -1,4 +1,5 @@
 import os
+import sys
 
 import imageio.v2 as imageio
 import argparse
@@ -13,9 +14,10 @@ from MambaCD.changedetection.utils_func.visualize import visualize_class_map
 from MambaCD.changedetection.models.MambaMCD import STMambaMCD
 
 class Inferencer(object):
-    def __init__(self, args, img_name):
+    def __init__(self, args, img_name, num_workers=8):
         self.args = args
         self.img_name = img_name
+        self.num_workers = num_workers
         self.resume = [os.path.join(args.model_path, pth) for pth in os.listdir(args.model_path) if pth.endswith('.pth')][0]
         config = get_config(args)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -101,40 +103,40 @@ class Inferencer(object):
     def infer(self):
         torch.cuda.empty_cache()
         dataset = MultiChangeDetectionDatset(self.infer_dataset_path, self.args.data_name_list, 256, None, 'inference')
-        val_data_loader = DataLoader(dataset, batch_size=1, num_workers=12, drop_last=False)
+        val_data_loader = DataLoader(dataset, batch_size=1, num_workers=self.num_workers, pin_memory=False, drop_last=False)
         torch.cuda.empty_cache()
 
         with torch.no_grad():
-            with tqdm(total=len(dataset), desc=f"Inferencing...") as pbar:
-                for itera, data in enumerate(val_data_loader):
-                    pre_change_imgs, post_change_imgs, names = data
-                    pre_change_imgs = pre_change_imgs.to(self.device).float()
-                    post_change_imgs = post_change_imgs.to(self.device)
-    
-                    # 모델의 출력 가져오기
-                    output_logits = self.deep_model(pre_change_imgs, post_change_imgs)
-    
-                    output_1 = output_logits.data.cpu().numpy()
-                    predicted_classes = np.argmax(output_1, axis=1)
-    
-                    # 확률 분포로 변환
-                    output_probs = torch.softmax(output_logits, dim=1)
-    
-                    # argmax를 사용하여 클래스를 결정
-                    output_classes = output_probs.data.cpu().numpy()
-    
-                    # confidence score 계산 (각 픽셀에서 최대 확률)
-                    confidence_scores = np.max(output_classes, axis=1)  # 각 픽셀에서 가장 높은 확률 (confidence score)
-                    confidence_map = np.squeeze(confidence_scores) * 100  # 1채널 신뢰도 맵
-                
-                    image_name = names[0][0:-4] + f'.png'
-                    confidence_map_name = names[0][0:-4] + f'_confidence.png'
-    
-                    change_map = np.squeeze(predicted_classes)  # 멀티클래스 맵
-                    change_map_image = visualize_class_map(change_map)  # 클래스를 색으로 변환하는 시각화 함수
-                
-                    imageio.imwrite(os.path.join(self.change_map_saved_path, image_name), change_map_image.astype(np.uint8))
-                    imageio.imwrite(os.path.join(self.confidence_map_saved_path, confidence_map_name), confidence_map.astype(np.uint8))
-                    
-                    pbar.update(1)  # 프로그레스 바 업데이트
-    
+            for data in tqdm(val_data_loader, desc=f"Inferencing {self.img_name}...", dynamic_ncols=True, leave=True, file=sys.stderr):
+                pre_change_imgs, post_change_imgs, names = data
+                pre_change_imgs = pre_change_imgs.to(self.device).float()
+                post_change_imgs = post_change_imgs.to(self.device)
+
+                # 모델의 출력 가져오기
+                output_logits = self.deep_model(pre_change_imgs, post_change_imgs)
+
+                output_1 = output_logits.data.cpu().numpy()
+                predicted_classes = np.argmax(output_1, axis=1)
+
+                # 확률 분포로 변환
+                output_probs = torch.softmax(output_logits, dim=1)
+
+                # argmax를 사용하여 클래스를 결정
+                output_classes = output_probs.data.cpu().numpy()
+
+                # confidence score 계산 (각 픽셀에서 최대 확률)
+                confidence_scores = np.max(output_classes, axis=1)  # 각 픽셀에서 가장 높은 확률 (confidence score)
+                confidence_map = np.squeeze(confidence_scores) * 100  # 1채널 신뢰도 맵
+            
+                image_name = names[0][0:-4] + f'.png'
+                confidence_map_name = names[0][0:-4] + f'_confidence.png'
+
+                change_map = np.squeeze(predicted_classes)  # 멀티클래스 맵
+                change_map_image = visualize_class_map(change_map)  # 클래스를 색으로 변환하는 시각화 함수
+            
+                imageio.imwrite(os.path.join(self.change_map_saved_path, image_name), change_map_image.astype(np.uint8))
+                imageio.imwrite(os.path.join(self.confidence_map_saved_path, confidence_map_name), confidence_map.astype(np.uint8))
+
+                # 불필요한 변수 삭제 및 캐시 정리
+                del pre_change_imgs, post_change_imgs, output_logits
+                torch.cuda.empty_cache()                
