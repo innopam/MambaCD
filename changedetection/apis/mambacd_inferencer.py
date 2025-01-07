@@ -14,8 +14,9 @@ from MambaCD.changedetection.utils_func.visualize import visualize_class_map
 from MambaCD.changedetection.models.MambaMCD import STMambaMCD
 
 class Inferencer(object):
-    def __init__(self, args, img_name, num_workers=8):
+    def __init__(self, args, mode, img_name, num_workers=8):
         self.args = args
+        self.mode = mode
         self.img_name = img_name
         self.num_workers = num_workers
         self.resume = [os.path.join(args.model_path, pth) for pth in os.listdir(args.model_path) if pth.endswith('.pth')][0]
@@ -132,7 +133,7 @@ class Inferencer(object):
                 confidence_map_name = names[0][0:-4] + f'_confidence.png'
 
                 change_map = np.squeeze(predicted_classes)  # 멀티클래스 맵
-                change_map_image = visualize_class_map(change_map)  # 클래스를 색으로 변환하는 시각화 함수
+                change_map_image = visualize_class_map(change_map, self.mode)  # 클래스를 색으로 변환하는 시각화 함수
             
                 imageio.imwrite(os.path.join(self.change_map_saved_path, image_name), change_map_image.astype(np.uint8))
                 imageio.imwrite(os.path.join(self.confidence_map_saved_path, confidence_map_name), confidence_map.astype(np.uint8))
